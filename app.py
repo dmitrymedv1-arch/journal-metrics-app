@@ -131,7 +131,7 @@ def main():
         st.warning("⚠️ Работает в упрощенном режиме. Некоторые функции могут быть ограничены.")
     
     # Заголовок приложения
-    st.markdown('<h1 class="main-header">📊 Анализатор Метрик Журнала</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📊 Journal Metrics Analyzer / ©Chimica Techno Acta </h1>', unsafe_allow_html=True)
     
     # Информация о системе
     with st.expander("ℹ️ О системе анализа"):
@@ -503,3 +503,4 @@ def display_parameters(result, is_precise_mode):
 
 if __name__ == "__main__":
     main()
+
