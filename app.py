@@ -6,6 +6,7 @@ from datetime import datetime
 import calendar
 import sys
 import os
+import re
 
 # Добавляем текущую директорию в путь для импорта
 sys.path.append(os.path.dirname(__file__))
@@ -20,7 +21,6 @@ except ImportError:
 
 try:
     from journal_analyzer import (
-        get_issn_by_name, 
         calculate_metrics_enhanced,
         calculate_metrics_fast,
         detect_journal_field,
@@ -35,6 +35,8 @@ except ImportError as e:
         return None
     def calculate_metrics_fast(*args, **kwargs):
         return None
+    def detect_journal_field(*args, **kwargs):
+        return "general"
     def on_clear_cache_clicked(*args, **kwargs):
         return "Кэш не доступен"
 
@@ -116,6 +118,14 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+def validate_issn(issn):
+    """Проверка формата ISSN"""
+    if not issn:
+        return False
+    # Формат XXXX-XXXX или XXXX-XXX(X)
+    pattern = r'^\d{4}-\d{3}[\dXx]$'
+    return re.match(pattern, issn) is not None
+
 def main():
     if not JOURNAL_ANALYZER_AVAILABLE:
         st.warning("⚠️ Работает в упрощенном режиме. Некоторые функции могут быть ограничены.")
@@ -192,8 +202,8 @@ def main():
             return
         
         # Валидация ISSN
-        if not re.match(r'^\d{4}-\d{4}$', issn_input):
-            st.error("❌ Неверный формат ISSN. Используйте формат: XXXX-XXXX")
+        if not validate_issn(issn_input):
+            st.error("❌ Неверный формат ISSN. Используйте формат: XXXX-XXXX (например: 1548-7660)")
             return
         
         # Определяем функцию анализа в зависимости от режима
