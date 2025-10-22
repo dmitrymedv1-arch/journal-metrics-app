@@ -131,7 +131,7 @@ def main():
         st.warning("⚠️ Работает в упрощенном режиме. Некоторые функции могут быть ограничены.")
     
     # Заголовок приложения
-    st.markdown('<h1 class="main-header">📊 Journal Metrics Analyzer / ©Chimica Techno Acta </h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📊 Journal Metrics Analyzer </h1>', unsafe_allow_html=True)
     
     # Информация о системе
     with st.expander("ℹ️ О системе анализа"):
@@ -151,6 +151,8 @@ def main():
         - Коррекция задержек индексации
         - Доверительные интервалы
         - Рекомендуется для финальной оценки
+        
+        ©Chimica Techno Acta / ©developed by daM
         """)
     
     # Боковая панель для ввода данных
@@ -503,4 +505,5 @@ def display_parameters(result, is_precise_mode):
 
 if __name__ == "__main__":
     main()
+
 
