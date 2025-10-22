@@ -3,17 +3,41 @@ import pandas as pd
 import numpy as np
 import time
 from datetime import datetime
-import plotly.express as px
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import calendar
+import sys
+import os
 
-# Импорт нашей логики анализа
-from journal_analyzer import (
-    get_issn_by_name, 
-    calculate_metrics_enhanced,
-    detect_journal_field,
-    on_clear_cache_clicked
-)
+# Добавляем текущую директорию в путь для импорта
+sys.path.append(os.path.dirname(__file__))
+
+try:
+    import plotly.express as px
+    import plotly.graph_objects as go
+    PLOTLY_AVAILABLE = True
+except ImportError:
+    PLOTLY_AVAILABLE = False
+    st.warning("Plotly не установлен. Графики будут отключены.")
+
+try:
+    from journal_analyzer import (
+        get_issn_by_name, 
+        calculate_metrics_enhanced,
+        detect_journal_field,
+        on_clear_cache_clicked
+    )
+    JOURNAL_ANALYZER_AVAILABLE = True
+except ImportError as e:
+    JOURNAL_ANALYZER_AVAILABLE = False
+    st.error(f"Ошибка импорта journal_analyzer: {e}")
+    # Создаем заглушки
+    def get_issn_by_name(*args, **kwargs):
+        return None, None
+    def calculate_metrics_enhanced(*args, **kwargs):
+        return None
+    def detect_journal_field(*args, **kwargs):
+        return "general"
+    def on_clear_cache_clicked(*args, **kwargs):
+        return "Кэш не доступен"
 
 # Настройка страницы
 st.set_page_config(
@@ -56,20 +80,21 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 def main():
+    if not JOURNAL_ANALYZER_AVAILABLE:
+        st.warning("⚠️ Работает в упрощенном режиме. Некоторые функции могут быть ограничены.")
+    
     # Заголовок приложения
-    st.markdown('<h1 class="main-header">📊 Усовершенствованный Анализатор Метрик Журнала</h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📊 Анализатор Метрик Журнала</h1>', unsafe_allow_html=True)
     
     # Информация о системе
     with st.expander("ℹ️ О системе анализа"):
         st.markdown("""
-        **Реализованные улучшения:**
-        - ✅ Реальный анализ самоцитирований через reference-list
-        - ✅ Временная модель на исторических данных
-        - ✅ Коррекция задержек индексации цитирований
-        - ✅ Доверительные интервалы (бутстрэп-метод)
-        - ✅ Исключение некорректных типов статей
-        - ✅ Мульти-источниковая верификация данных
-        - ✅ Автоматическое определение области журнала
+        **Возможности системы:**
+        - ✅ Расчет текущих значений импакт-фактора и CiteScore
+        - 🔮 Прогнозирование метрик на конец года
+        - 🔍 Анализ самоцитирований
+        - 📊 Статистика по статьям
+        - 🎯 Автоматическое определение области журнала
         """)
     
     # Боковая панель для ввода данных
@@ -97,10 +122,6 @@ def main():
             issn_input = ""
         
         use_cache = st.checkbox("Использовать кэш", value=True)
-        analysis_type = st.selectbox(
-            "Тип анализа:",
-            ["Полный анализ", "Быстрый анализ", "Детальный анализ с верификацией"]
-        )
         
         # Кнопка запуска анализа
         analyze_button = st.button(
@@ -111,15 +132,14 @@ def main():
         
         # Кнопка очистки кэша
         if st.button("🧹 Очистить кэш", use_container_width=True):
-            on_clear_cache_clicked(None)
-            st.success("Кэш успешно очищен!")
+            result_msg = on_clear_cache_clicked(None)
+            st.success(result_msg)
         
         st.markdown("---")
         st.markdown("""
         **Поддерживаемые источники данных:**
         - Crossref API
-        - OpenAlex API
-        - Кэшированные исторические данные
+        - Кэшированные данные
         """)
     
     # Основная область контента
@@ -129,7 +149,7 @@ def main():
             return
         
         # Показываем индикатор загрузки
-        with st.spinner("🔄 Запуск усовершенствованного анализа..."):
+        with st.spinner("🔄 Запуск анализа..."):
             try:
                 # Получаем ISSN если введено название
                 if journal_name_input and not issn_input:
@@ -149,13 +169,13 @@ def main():
                 # Запускаем основной анализ
                 with st.status("Выполнение анализа...", expanded=True) as status:
                     st.write("🔍 Сбор данных о статьях...")
-                    st.write("📊 Анализ цитирований и самоцитирований...")
-                    st.write("📈 Построение прогнозных моделей...")
+                    st.write("📊 Анализ цитирований...")
+                    st.write("📈 Построение прогнозов...")
                     
                     result = calculate_metrics_enhanced(issn, journal_name, use_cache)
                     
                     if result is None:
-                        st.error("Не удалось получить данные для анализа.")
+                        st.error("Не удалось получить данные для анализа. Возможно, журнал не найден или нет данных о статьях.")
                         return
                     
                     status.update(label="Анализ завершен!", state="complete")
@@ -183,11 +203,9 @@ def display_results(result):
     st.markdown("---")
     
     # Вкладки для разных разделов результатов
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3 = st.tabs([
         "📈 Основные метрики", 
-        "🔍 Детальный анализ", 
         "📊 Статистика", 
-        "📅 Сезонность",
         "⚙️ Параметры"
     ])
     
@@ -195,15 +213,9 @@ def display_results(result):
         display_main_metrics(result)
     
     with tab2:
-        display_detailed_analysis(result)
-    
-    with tab3:
         display_statistics(result)
     
-    with tab4:
-        display_seasonality_analysis(result)
-    
-    with tab5:
+    with tab3:
         display_parameters(result)
 
 def display_main_metrics(result):
@@ -254,13 +266,6 @@ def display_main_metrics(result):
         st.metric("Оптимистичный", f"{result['if_forecasts']['optimistic']:.2f}")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # Доверительные интервалы
-    st.markdown("#### Доверительные интервалы (95%)")
-    ci_lower = result['if_forecasts_ci']['lower_95']
-    ci_upper = result['if_forecasts_ci']['upper_95']
-    
-    st.info(f"**Диапазон:** [{ci_lower:.2f} - {ci_upper:.2f}]")
-    
     # Аналогично для CiteScore
     st.subheader("📊 CiteScore 2025")
     
@@ -274,37 +279,6 @@ def display_main_metrics(result):
     
     with col3:
         st.metric("Статьи для расчета", f"{result['total_articles_cs']}")
-
-def display_detailed_analysis(result):
-    """Отображение детального анализа"""
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.subheader("📈 Распределение цитирований")
-        
-        # Создаем DataFrame для визуализации
-        if_data = pd.DataFrame(result['if_citation_data'])
-        if not if_data.empty:
-            fig = px.histogram(if_data, x='Цитирования', 
-                             title='Распределение цитирований для ИФ',
-                             nbins=20)
-            st.plotly_chart(fig, use_container_width=True)
-    
-    with col2:
-        st.subheader("🎯 Анализ самоцитирований")
-        
-        self_citation_rate = result['self_citation_rate']
-        
-        st.metric("Уровень самоцитирований", f"{self_citation_rate:.1%}")
-        st.metric("Примерное количество", f"{result['total_self_citations']:.0f}")
-        
-        if self_citation_rate > 0.2:
-            st.warning("⚠️ Высокий уровень самоцитирований (>20%)")
-        elif self_citation_rate > 0.1:
-            st.info("ℹ️ Умеренный уровень самоцитирований (10-20%)")
-        else:
-            st.success("✅ Нормальный уровень самоцитирований (<10%)")
 
 def display_statistics(result):
     """Отображение статистики"""
@@ -322,6 +296,8 @@ def display_statistics(result):
             ('Стандартное отклонение', 'std')
         ]).round(2)
         st.dataframe(if_stats, use_container_width=True)
+    else:
+        st.info("Нет данных о статьях для импакт-фактора")
     
     # Статистика для CiteScore
     if result['cs_citation_data']:
@@ -334,43 +310,8 @@ def display_statistics(result):
             ('Стандартное отклонение', 'std')
         ]).round(2)
         st.dataframe(cs_stats, use_container_width=True)
-
-def display_seasonality_analysis(result):
-    """Анализ сезонности"""
-    
-    st.subheader("📅 Сезонность цитирований")
-    
-    # Создаем график сезонности
-    months = list(range(1, 13))
-    month_names = [calendar.month_name[i] for i in months]
-    coefficients = [result['seasonal_coefficients'].get(i, 0) for i in months]
-    
-    fig = go.Figure(data=[
-        go.Bar(x=month_names, y=coefficients, 
-               marker_color='#1E88E5',
-               name='Коэффициент цитирования')
-    ])
-    
-    fig.update_layout(
-        title='Распределение цитирований по месяцам',
-        xaxis_title='Месяц',
-        yaxis_title='Коэффициент',
-        showlegend=False
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Информация о коэффициентах нормализации
-    st.subheader("📈 Коэффициенты нормализации")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Консервативный", f"{result['multipliers']['conservative']:.2f}x")
-    with col2:
-        st.metric("Сбалансированный", f"{result['multipliers']['balanced']:.2f}x")
-    with col3:
-        st.metric("Оптимистичный", f"{result['multipliers']['optimistic']:.2f}x")
+    else:
+        st.info("Нет данных о статьях для CiteScore")
 
 def display_parameters(result):
     """Отображение параметров расчета"""
@@ -384,18 +325,18 @@ def display_parameters(result):
         st.write(f"- Импакт-фактор: {result['if_publication_years'][0]}-{result['if_publication_years'][1]}")
         st.write(f"- CiteScore: {result['cs_publication_years'][0]}-{result['cs_publication_years'][-1]}")
         
-        st.markdown("**Качество модели:**")
-        st.write(f"- Использовано лет для модели: {len(result['citation_model_data'])}")
-        st.write(f"- Размер бутстрэп-выборки: 1000 итераций")
-        st.write(f"- Уровень доверия: 95%")
+        st.markdown("**Анализ самоцитирований:**")
+        st.write(f"- Уровень самоцитирований: {result['self_citation_rate']:.1%}")
+        st.write(f"- Примерное количество: {result['total_self_citations']}")
     
     with col2:
         st.markdown("**Дата анализа:**")
         st.write(result['analysis_date'].strftime('%d.%m.%Y'))
         
-        if result['bootstrap_stats']['if_mean'] > 0:
-            if_cv = result['bootstrap_stats']['if_upper'] / result['bootstrap_stats']['if_mean'] - 1
-            st.metric("Коэффициент вариации ИФ", f"{if_cv:.1%}")
+        st.markdown("**Коэффициенты прогноза:**")
+        st.write(f"- Консервативный: {result['multipliers']['conservative']:.2f}x")
+        st.write(f"- Сбалансированный: {result['multipliers']['balanced']:.2f}x")
+        st.write(f"- Оптимистичный: {result['multipliers']['optimistic']:.2f}x")
 
 if __name__ == "__main__":
     main()
