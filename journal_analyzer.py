@@ -5,22 +5,14 @@ from datetime import datetime, date, timedelta
 import time
 import random
 import calendar
-import concurrent.futures
 from collections import defaultdict
-import re
 import pickle
 import hashlib
 import os
-from tqdm import tqdm
-import json
-from scipy import stats
 import warnings
 warnings.filterwarnings('ignore')
 
 base_url = "https://api.crossref.org/works"
-openalex_base = "https://api.openalex.org"
-
-# Настройки кэширования
 CACHE_DIR = "journal_analysis_cache"
 CACHE_DURATION = timedelta(hours=24)
 
@@ -50,11 +42,9 @@ def load_from_cache(cache_key):
     cache_file = os.path.join(CACHE_DIR, f"{cache_key}.pkl")
     if not os.path.exists(cache_file):
         return None
-
     try:
         with open(cache_file, 'rb') as f:
             cache_data = pickle.load(f)
-
         if datetime.now() - cache_data['timestamp'] < CACHE_DURATION:
             return cache_data['data']
         else:
@@ -81,7 +71,7 @@ def fetch_articles_fast(issn, from_date, until_date, use_cache=True):
     params = {
         'filter': f'issn:{issn},from-pub-date:{from_date},until-pub-date:{until_date}',
         'rows': 100,  # Меньше статей для скорости
-        'mailto': 'your_email@example.com'
+        'mailto': 'example@example.com'
     }
     
     try:
@@ -129,7 +119,7 @@ def fetch_articles_enhanced(issn, from_date, until_date, use_cache=True):
             'filter': f'issn:{issn},from-pub-date:{from_date},until-pub-date:{until_date}',
             'rows': 1000,
             'cursor': cursor,
-            'mailto': 'your_email@example.com'
+            'mailto': 'example@example.com'
         }
         try:
             resp = requests.get(base_url, params=params, timeout=60)
@@ -215,136 +205,6 @@ def calculate_weighted_multiplier(current_date, seasonal_coefficients, method="b
         return total_weighted_year / (weighted_passed * 0.9)
     else:
         return total_weighted_year / weighted_passed
-
-def analyze_real_self_citations(article, journal_issn):
-    """РЕАЛЬНЫЙ анализ самоцитирований через reference-list"""
-    try:
-        doi = article.get('DOI')
-        if not doi:
-            return 0, 0, 0
-
-        url = f"https://api.crossref.org/works/{doi}"
-        resp = requests.get(url, timeout=30)
-        if resp.status_code != 200:
-            return 0, 0, 0
-
-        data = resp.json()
-        message = data['message']
-        total_citations = message.get('is-referenced-by-count', 0)
-
-        if total_citations == 0:
-            return 0, 0, 0
-
-        citing_url = f"https://api.crossref.org/works/{doi}/referencing-works"
-        citing_resp = requests.get(citing_url, timeout=30)
-
-        if citing_resp.status_code != 200:
-            return 0, total_citations, 0
-
-        citing_data = citing_resp.json()
-        citing_items = citing_data['message']['items']
-
-        self_citations_count = 0
-        analyzed_citations = 0
-
-        for citing_article in citing_items[:min(50, len(citing_items))]:
-            citing_issns = citing_article.get('ISSN', [])
-            if journal_issn in citing_issns:
-                self_citations_count += 1
-            analyzed_citations += 1
-
-        if analyzed_citations > 0:
-            self_citation_rate = self_citations_count / analyzed_citations
-            estimated_self_citations = int(total_citations * self_citation_rate)
-        else:
-            estimated_self_citations = 0
-            self_citation_rate = 0
-
-        return estimated_self_citations, total_citations, self_citation_rate
-
-    except Exception as e:
-        return 0, 0, 0
-
-def build_journal_citation_model(issn, years_back=5):
-    """Построение реальной временной модели цитирований для журнала"""
-    current_year = datetime.now().year
-    model_data = []
-
-    for year in range(current_year - years_back, current_year):
-        articles = fetch_articles_enhanced(issn, f"{year}-01-01", f"{year}-12-31", use_cache=True)
-
-        if not articles:
-            continue
-
-        sample_size = min(30, len(articles))
-        if sample_size == 0:
-            continue
-            
-        sample_articles = random.sample(articles, sample_size)
-        year_citation_patterns = []
-
-        for article in sample_articles:
-            doi = article.get('DOI')
-            if not doi:
-                continue
-
-            # Здесь должна быть логика анализа цитирований
-            # Для простоты возвращаем пустые паттерны
-            year_citation_patterns.extend([])
-
-        if year_citation_patterns:
-            model_data.append({
-                'year': year,
-                'citation_patterns': year_citation_patterns,
-                'article_count': len(articles)
-            })
-
-    return model_data
-
-def calculate_indexation_delay_adjustment(article_date_str):
-    """Корректировка на задержку индексации цитирований"""
-    try:
-        if not article_date_str:
-            return 1.0
-
-        if isinstance(article_date_str, list) and article_date_str:
-            pub_date = datetime(article_date_str[0], article_date_str[1] if len(article_date_str) > 1 else 1,
-                              article_date_str[2] if len(article_date_str) > 2 else 1)
-        else:
-            return 1.0
-
-        months_since_publication = (datetime.now() - pub_date).days / 30.0
-
-        if months_since_publication < 3:
-            return 0.3
-        elif months_since_publication < 6:
-            return 0.6
-        elif months_since_publication < 12:
-            return 0.85
-        else:
-            return 1.0
-
-    except:
-        return 1.0
-
-def bootstrap_confidence_intervals(data, n_bootstrap=1000, confidence=0.95):
-    """Расчет доверительных интервалов методом бутстрэп"""
-    if len(data) == 0:
-        return 0, 0, 0
-
-    bootstrap_means = []
-    for _ in range(n_bootstrap):
-        sample = np.random.choice(data, size=len(data), replace=True)
-        bootstrap_means.append(np.mean(sample))
-
-    lower_percentile = (1 - confidence) / 2 * 100
-    upper_percentile = (1 - (1 - confidence) / 2) * 100
-
-    lower_bound = np.percentile(bootstrap_means, lower_percentile)
-    upper_bound = np.percentile(bootstrap_means, upper_percentile)
-    mean_value = np.mean(data)
-
-    return mean_value, lower_bound, upper_bound
 
 def detect_journal_field(issn, journal_name):
     """Автоматическое определение области журнала"""
@@ -495,7 +355,7 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
         return None
 
 def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cache=True):
-    """УСОВЕРШЕНСТВОВАННАЯ функция для расчета метрик с максимальной точностью"""
+    """УСОВЕРШЕНСТВОВАННАЯ функция для расчета метрик"""
     try:
         current_date = date.today()
         current_year = current_date.year
@@ -531,54 +391,16 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
         if B_if == 0 or B_cs == 0:
             return None
 
-        # РЕАЛЬНЫЙ анализ самоцитирований
-        total_self_citations = 0
-        total_citations_analyzed = 0
-        self_citation_rates = []
-
-        sample_size = min(10, len(cs_items))  # Меньше выборка для скорости
-        if sample_size > 0:
-            sample_for_self_citations = random.sample(cs_items, sample_size)
-            for article in sample_for_self_citations:
-                self_cites, total_cites, self_rate = analyze_real_self_citations(article, issn)
-                total_self_citations += self_cites
-                total_citations_analyzed += total_cites
-                if self_rate > 0:
-                    self_citation_rates.append(self_rate)
-
-        avg_self_citation_rate = np.mean(self_citation_rates) if self_citation_rates else 0.05
-
-        # Временная модель (упрощенная для веб-версии)
-        citation_model = build_journal_citation_model(issn, years_back=3)
-
-        # Используем сезонные коэффициенты
-        seasonal_coefficients = get_seasonal_coefficients(journal_field)
-
-        # Расчет с коррекцией на задержку индексации
-        A_if_current = 0
-        A_cs_current = 0
-
-        for item in if_items:
-            cites = item.get('is-referenced-by-count', 0)
-            pub_date = item.get('published', {}).get('date-parts', [[None]])[0]
-            delay_adjustment = calculate_indexation_delay_adjustment(pub_date)
-            A_if_current += cites / delay_adjustment if delay_adjustment > 0 else cites
-
-        for item in cs_items:
-            cites = item.get('is-referenced-by-count', 0)
-            pub_date = item.get('published', {}).get('date-parts', [[None]])[0]
-            delay_adjustment = calculate_indexation_delay_adjustment(pub_date)
-            A_cs_current += cites / delay_adjustment if delay_adjustment > 0 else cites
-
-        # Корректировка на самоцитирования
-        A_if_adjusted = A_if_current * (1 - avg_self_citation_rate)
-        A_cs_adjusted = A_cs_current * (1 - avg_self_citation_rate)
+        # Расчет цитирований
+        A_if_current = sum(item.get('is-referenced-by-count', 0) for item in if_items)
+        A_cs_current = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
 
         # Текущие значения метрик
-        current_if = A_if_adjusted / B_if if B_if > 0 else 0
-        current_citescore = A_cs_adjusted / B_cs if B_cs > 0 else 0
+        current_if = A_if_current / B_if if B_if > 0 else 0
+        current_citescore = A_cs_current / B_cs if B_cs > 0 else 0
 
-        # Взвешенная нормализация
+        # Улучшенные прогнозы
+        seasonal_coefficients = get_seasonal_coefficients(journal_field)
         multiplier_conservative = calculate_weighted_multiplier(current_date, seasonal_coefficients, "conservative")
         multiplier_balanced = calculate_weighted_multiplier(current_date, seasonal_coefficients, "balanced")
         multiplier_optimistic = calculate_weighted_multiplier(current_date, seasonal_coefficients, "optimistic")
@@ -656,11 +478,11 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
             'cs_publication_years': cs_publication_years,
             'seasonal_coefficients': seasonal_coefficients,
             'journal_field': journal_field,
-            'self_citation_rate': avg_self_citation_rate,
-            'total_self_citations': total_self_citations,
+            'self_citation_rate': 0.05,  # Для совместимости
+            'total_self_citations': int(A_if_current * 0.05),
             'issn': issn,
             'journal_name': journal_name,
-            'citation_model_data': citation_model,
+            'citation_model_data': [],
             'bootstrap_stats': {
                 'if_mean': if_boot_mean,
                 'if_lower': if_boot_lower,
@@ -674,6 +496,25 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
     except Exception as e:
         print(f"Ошибка в calculate_metrics_enhanced: {e}")
         return None
+
+def bootstrap_confidence_intervals(data, n_bootstrap=1000, confidence=0.95):
+    """Расчет доверительных интервалов методом бутстрэп"""
+    if len(data) == 0:
+        return 0, 0, 0
+
+    bootstrap_means = []
+    for _ in range(n_bootstrap):
+        sample = np.random.choice(data, size=len(data), replace=True)
+        bootstrap_means.append(np.mean(sample))
+
+    lower_percentile = (1 - confidence) / 2 * 100
+    upper_percentile = (1 - (1 - confidence) / 2) * 100
+
+    lower_bound = np.percentile(bootstrap_means, lower_percentile)
+    upper_bound = np.percentile(bootstrap_means, upper_percentile)
+    mean_value = np.mean(data)
+
+    return mean_value, lower_bound, upper_bound
 
 def on_clear_cache_clicked(b):
     """Функция для очистки кэша"""
