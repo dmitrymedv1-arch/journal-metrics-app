@@ -22,6 +22,7 @@ try:
     from journal_analyzer import (
         get_issn_by_name, 
         calculate_metrics_enhanced,
+        calculate_metrics_fast,
         detect_journal_field,
         on_clear_cache_clicked
     )
@@ -30,12 +31,10 @@ except ImportError as e:
     JOURNAL_ANALYZER_AVAILABLE = False
     st.error(f"Ошибка импорта journal_analyzer: {e}")
     # Создаем заглушки
-    def get_issn_by_name(*args, **kwargs):
-        return None, None
     def calculate_metrics_enhanced(*args, **kwargs):
         return None
-    def detect_journal_field(*args, **kwargs):
-        return "general"
+    def calculate_metrics_fast(*args, **kwargs):
+        return None
     def on_clear_cache_clicked(*args, **kwargs):
         return "Кэш не доступен"
 
@@ -84,11 +83,35 @@ st.markdown("""
         border-left: 4px solid #ffc107;
         margin: 1rem 0;
     }
+    .success-box {
+        background-color: #d4edda;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #28a745;
+        margin: 1rem 0;
+    }
     .section-header {
         color: #1E88E5;
         border-bottom: 2px solid #1E88E5;
         padding-bottom: 0.5rem;
         margin-top: 2rem;
+    }
+    .mode-indicator {
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        font-weight: bold;
+        display: inline-block;
+        margin-bottom: 1rem;
+    }
+    .fast-mode {
+        background-color: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeaa7;
+    }
+    .precise-mode {
+        background-color: #d1ecf1;
+        color: #0c5460;
+        border: 1px solid #bee5eb;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -103,39 +126,44 @@ def main():
     # Информация о системе
     with st.expander("ℹ️ О системе анализа"):
         st.markdown("""
-        **Возможности системы:**
-        - ✅ Расчет текущих значений импакт-фактора и CiteScore
-        - 🔮 Прогнозирование метрик на конец года (3 варианта для каждой метрики)
-        - 🔍 Анализ самоцитирований
-        - 📊 Статистика по статьям
-        - 🎯 Автоматическое определение области журнала
+        **Доступные режимы анализа:**
+        
+        🚀 **Быстрый анализ (Fast Analysis)**
+        - Время выполнения: 10-30 секунд
+        - Базовый расчет метрик
+        - Упрощенный прогноз
+        - Подходит для первоначальной оценки
+        
+        🎯 **Точный анализ (Precise Analysis)** 
+        - Время выполнения: 2-5 минут
+        - Полный анализ самоцитирований
+        - Временные модели цитирований
+        - Коррекция задержек индексации
+        - Доверительные интервалы
+        - Рекомендуется для финальной оценки
         """)
     
     # Боковая панель для ввода данных
     with st.sidebar:
         st.header("🔍 Параметры анализа")
         
-        input_type = st.radio(
-            "Тип ввода:",
-            ["ISSN журнала", "Название журнала"]
+        # Только ISSN ввод
+        issn_input = st.text_input(
+            "ISSN журнала (формат: XXXX-XXXX):",
+            value="2411-1414",
+            placeholder="Например: 1548-7660",
+            help="Введите ISSN журнала в формате XXXX-XXXX"
         )
         
-        if input_type == "ISSN журнала":
-            issn_input = st.text_input(
-                "ISSN (формат: XXXX-XXXX):",
-                value="2411-1414",
-                placeholder="Например: 1548-7660"
-            )
-            journal_name_input = ""
-        else:
-            journal_name_input = st.text_input(
-                "Название журнала на английском:",
-                value="Nature",
-                placeholder="Например: Nature или Science"
-            )
-            issn_input = ""
+        # Выбор режима анализа
+        analysis_mode = st.radio(
+            "Режим анализа:",
+            ["🚀 Быстрый анализ (Fast Analysis)", "🎯 Точный анализ (Precise Analysis)"],
+            help="Быстрый анализ - 10-30 сек, Точный анализ - 2-5 мин"
+        )
         
-        use_cache = st.checkbox("Использовать кэш", value=True)
+        use_cache = st.checkbox("Использовать кэш", value=True,
+                               help="Ускоряет повторные анализы того же журнала")
         
         # Кнопка запуска анализа
         analyze_button = st.button(
@@ -153,59 +181,79 @@ def main():
         st.markdown("""
         **Поддерживаемые источники данных:**
         - Crossref API
+        - OpenAlex API (в точном режиме)
         - Кэшированные данные
         """)
     
     # Основная область контента
     if analyze_button:
-        if not issn_input and not journal_name_input:
-            st.error("❌ Пожалуйста, введите ISSN или название журнала")
+        if not issn_input:
+            st.error("❌ Пожалуйста, введите ISSN журнала")
             return
+        
+        # Валидация ISSN
+        if not re.match(r'^\d{4}-\d{4}$', issn_input):
+            st.error("❌ Неверный формат ISSN. Используйте формат: XXXX-XXXX")
+            return
+        
+        # Определяем функцию анализа в зависимости от режима
+        is_precise_mode = "Точный" in analysis_mode
+        analysis_function = calculate_metrics_enhanced if is_precise_mode else calculate_metrics_fast
+        
+        # Показываем индикатор режима
+        mode_class = "precise-mode" if is_precise_mode else "fast-mode"
+        mode_text = "🎯 Точный анализ" if is_precise_mode else "🚀 Быстрый анализ"
+        st.markdown(f'<div class="mode-indicator {mode_class}">{mode_text}</div>', unsafe_allow_html=True)
+        
+        # Предупреждение о времени для точного анализа
+        if is_precise_mode:
+            st.info("""
+            ⏳ **Точный анализ может занять 2-5 минут**
+            
+            Выполняются:
+            - Полный сбор статей с пагинацией
+            - Реальный анализ самоцитирований  
+            - Построение временной модели
+            - Расчет доверительных интервалов
+            """)
         
         # Показываем индикатор загрузки
         with st.spinner("🔄 Запуск анализа..."):
             try:
-                # Получаем ISSN если введено название
-                if journal_name_input and not issn_input:
-                    with st.status("Поиск журнала...", expanded=True) as status:
-                        st.write(f"Поиск ISSN для: {journal_name_input}")
-                        issn, journal_name = get_issn_by_name(journal_name_input, use_cache)
-                        if issn:
-                            st.success(f"Найден журнал: {journal_name} (ISSN: {issn})")
-                            status.update(label="Журнал найден!", state="complete")
-                        else:
-                            st.error("Журнал не найден. Проверьте название.")
-                            return
-                else:
-                    issn = issn_input
-                    journal_name = "Не указано"
-                
-                # Запускаем основной анализ
+                # Запускаем анализ
                 with st.status("Выполнение анализа...", expanded=True) as status:
-                    st.write("🔍 Сбор данных о статьях...")
-                    st.write("📊 Анализ цитирований...")
-                    st.write("📈 Построение прогнозов...")
+                    if is_precise_mode:
+                        st.write("🔍 Полный сбор данных о статьях...")
+                        st.write("📊 Реальный анализ самоцитирований...")
+                        st.write("📈 Построение временной модели...")
+                        st.write("🎯 Расчет доверительных интервалов...")
+                    else:
+                        st.write("🔍 Быстрый сбор данных о статьях...")
+                        st.write("📊 Базовый анализ цитирований...")
+                        st.write("📈 Упрощенный прогноз...")
                     
-                    result = calculate_metrics_enhanced(issn, journal_name, use_cache)
+                    start_time = time.time()
+                    result = analysis_function(issn_input, "Не указано", use_cache)
+                    analysis_time = time.time() - start_time
                     
                     if result is None:
                         st.error("Не удалось получить данные для анализа. Возможно, журнал не найден или нет данных о статьях.")
                         return
                     
-                    status.update(label="Анализ завершен!", state="complete")
+                    status.update(label=f"Анализ завершен за {analysis_time:.1f} секунд!", state="complete")
                 
                 # Отображаем результаты
-                display_results(result)
+                display_results(result, is_precise_mode)
                 
             except Exception as e:
                 st.error(f"Произошла ошибка при анализе: {str(e)}")
-                st.info("Попробуйте еще раз или используйте другой идентификатор журнала")
+                st.info("Попробуйте еще раз или используйте другой ISSN журнала")
 
-def display_results(result):
+def display_results(result, is_precise_mode):
     """Функция для отображения результатов анализа"""
     
     # Основная информация о журнале
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         st.metric("Название журнала", result['journal_name'])
@@ -213,30 +261,36 @@ def display_results(result):
         st.metric("ISSN", result['issn'])
     with col3:
         st.metric("Область", result['journal_field'])
+    with col4:
+        mode_text = "🎯 Точный" if is_precise_mode else "🚀 Быстрый"
+        st.metric("Режим анализа", mode_text)
     
     st.markdown("---")
     
     # Вкладки для разных разделов результатов
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📈 Основные метрики", 
-        "🔍 Детальный анализ",
-        "📊 Статистика", 
-        "⚙️ Параметры"
-    ])
+    tab_names = ["📈 Основные метрики", "📊 Статистика", "⚙️ Параметры"]
+    if is_precise_mode:
+        tab_names.insert(1, "🔍 Детальный анализ")
     
-    with tab1:
-        display_main_metrics(result)
+    tabs = st.tabs(tab_names)
     
-    with tab2:
-        display_detailed_analysis(result)
+    with tabs[0]:
+        display_main_metrics(result, is_precise_mode)
     
-    with tab3:
-        display_statistics(result)
-    
-    with tab4:
-        display_parameters(result)
+    if is_precise_mode:
+        with tabs[1]:
+            display_detailed_analysis(result)
+        with tabs[2]:
+            display_statistics(result)
+        with tabs[3]:
+            display_parameters(result, is_precise_mode)
+    else:
+        with tabs[1]:
+            display_statistics(result)
+        with tabs[2]:
+            display_parameters(result, is_precise_mode)
 
-def display_main_metrics(result):
+def display_main_metrics(result, is_precise_mode):
     """Отображение основных метрик"""
     
     # ИМПАКТ-ФАКТОР
@@ -285,12 +339,13 @@ def display_main_metrics(result):
         st.metric("Оптимистичный", f"{result['if_forecasts']['optimistic']:.2f}")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # Доверительные интервалы
-    st.markdown("#### Доверительные интервалы Импакт-Фактора (95%)")
-    ci_lower = result['if_forecasts_ci']['lower_95']
-    ci_upper = result['if_forecasts_ci']['upper_95']
-    
-    st.info(f"**Диапазон:** [{ci_lower:.2f} - {ci_upper:.2f}]")
+    # Доверительные интервалы (только для точного анализа)
+    if is_precise_mode:
+        st.markdown("#### Доверительные интервалы Импакт-Фактора (95%)")
+        ci_lower = result['if_forecasts_ci']['lower_95']
+        ci_upper = result['if_forecasts_ci']['upper_95']
+        
+        st.info(f"**Диапазон:** [{ci_lower:.2f} - {ci_upper:.2f}]")
     
     st.markdown("---")
     
@@ -309,7 +364,7 @@ def display_main_metrics(result):
         st.metric("Статьи для расчета", f"{result['total_articles_cs']}",
                  help=f"Статьи за {result['cs_publication_years'][0]}-{result['cs_publication_years'][-1]}")
     
-    # Прогнозы CiteScore (по аналогии с импакт-фактором)
+    # Прогнозы CiteScore
     st.markdown("#### Прогнозы CiteScore на конец 2025")
     
     forecast_col1, forecast_col2, forecast_col3 = st.columns(3)
@@ -329,15 +384,16 @@ def display_main_metrics(result):
         st.metric("Оптимистичный", f"{result['citescore_forecasts']['optimistic']:.2f}")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # Доверительные интервалы для CiteScore
-    st.markdown("#### Доверительные интервалы CiteScore (95%)")
-    cs_ci_lower = result['citescore_forecasts_ci']['lower_95']
-    cs_ci_upper = result['citescore_forecasts_ci']['upper_95']
-    
-    st.info(f"**Диапазон:** [{cs_ci_lower:.2f} - {cs_ci_upper:.2f}]")
+    # Доверительные интервалы для CiteScore (только для точного анализа)
+    if is_precise_mode:
+        st.markdown("#### Доверительные интервалы CiteScore (95%)")
+        cs_ci_lower = result['citescore_forecasts_ci']['lower_95']
+        cs_ci_upper = result['citescore_forecasts_ci']['upper_95']
+        
+        st.info(f"**Диапазон:** [{cs_ci_lower:.2f} - {cs_ci_upper:.2f}]")
 
 def display_detailed_analysis(result):
-    """Отображение детального анализа"""
+    """Отображение детального анализа (только для точного режима)"""
     
     col1, col2 = st.columns(2)
     
@@ -364,6 +420,11 @@ def display_detailed_analysis(result):
             st.info("ℹ️ Умеренный уровень самоцитирований (10-20%)")
         else:
             st.success("✅ Нормальный уровень самоцитирований (<10%)")
+    
+    # Временная модель
+    if result['citation_model_data']:
+        st.subheader("📅 Временная модель цитирований")
+        st.info(f"Построена модель на основе {len(result['citation_model_data'])} лет исторических данных")
 
 def display_statistics(result):
     """Отображение статистики"""
@@ -398,7 +459,7 @@ def display_statistics(result):
     else:
         st.info("Нет данных о статьях для CiteScore")
 
-def display_parameters(result):
+def display_parameters(result, is_precise_mode):
     """Отображение параметров расчета"""
     
     st.subheader("⚙️ Параметры расчета")
@@ -422,6 +483,13 @@ def display_parameters(result):
         st.write(f"- Консервативный: {result['multipliers']['conservative']:.2f}x")
         st.write(f"- Сбалансированный: {result['multipliers']['balanced']:.2f}x")
         st.write(f"- Оптимистичный: {result['multipliers']['optimistic']:.2f}x")
+        
+        if is_precise_mode:
+            st.markdown("**Качество анализа:**")
+            st.success("✅ Полный анализ с временными моделями")
+        else:
+            st.markdown("**Качество анализа:**")
+            st.info("ℹ️ Быстрый анализ для первоначальной оценки")
 
 if __name__ == "__main__":
     main()
