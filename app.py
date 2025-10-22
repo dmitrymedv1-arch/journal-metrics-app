@@ -152,7 +152,7 @@ def main():
         - Доверительные интервалы
         - Рекомендуется для финальной оценки
         
-        ©Chimica Techno Acta / ©developed by daM
+        ©Chimica Techno Acta, https://chimicatechnoacta.ru / ©developed by daM
         """)
     
     # Боковая панель для ввода данных
@@ -505,5 +505,6 @@ def display_parameters(result, is_precise_mode):
 
 if __name__ == "__main__":
     main()
+
 
 
