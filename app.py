@@ -68,6 +68,14 @@ st.markdown("""
         padding: 1rem;
         border-radius: 8px;
         margin: 0.5rem 0;
+        border-left: 4px solid #1E88E5;
+    }
+    .citescore-forecast-box {
+        background-color: #e8f5e8;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 0.5rem 0;
+        border-left: 4px solid #4CAF50;
     }
     .warning-box {
         background-color: #fff3cd;
@@ -75,6 +83,12 @@ st.markdown("""
         border-radius: 8px;
         border-left: 4px solid #ffc107;
         margin: 1rem 0;
+    }
+    .section-header {
+        color: #1E88E5;
+        border-bottom: 2px solid #1E88E5;
+        padding-bottom: 0.5rem;
+        margin-top: 2rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -84,16 +98,17 @@ def main():
         st.warning("⚠️ Работает в упрощенном режиме. Некоторые функции могут быть ограничены.")
     
     # Заголовок приложения
-    st.markdown('<h1 class="main-header">📊 Journal Metrics Analyzer </h1>', unsafe_allow_html=True)
+    st.markdown('<h1 class="main-header">📊 Анализатор Метрик Журнала</h1>', unsafe_allow_html=True)
     
     # Информация о системе
     with st.expander("ℹ️ О системе анализа"):
         st.markdown("""
         **Возможности системы:**
         - ✅ Расчет текущих значений импакт-фактора и CiteScore
-        - 🔮 Прогнозирование метрик на конец года
+        - 🔮 Прогнозирование метрик на конец года (3 варианта для каждой метрики)
         - 🔍 Анализ самоцитирований
         - 📊 Статистика по статьям
+        - 🎯 Автоматическое определение области журнала
         """)
     
     # Боковая панель для ввода данных
@@ -202,8 +217,9 @@ def display_results(result):
     st.markdown("---")
     
     # Вкладки для разных разделов результатов
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📈 Основные метрики", 
+        "🔍 Детальный анализ",
         "📊 Статистика", 
         "⚙️ Параметры"
     ])
@@ -212,15 +228,19 @@ def display_results(result):
         display_main_metrics(result)
     
     with tab2:
-        display_statistics(result)
+        display_detailed_analysis(result)
     
     with tab3:
+        display_statistics(result)
+    
+    with tab4:
         display_parameters(result)
 
 def display_main_metrics(result):
     """Отображение основных метрик"""
     
-    st.subheader("🎯 Импакт-Фактор 2025")
+    # ИМПАКТ-ФАКТОР
+    st.markdown('<h3 class="section-header">🎯 Импакт-Фактор 2025</h3>', unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns(3)
     
@@ -265,8 +285,17 @@ def display_main_metrics(result):
         st.metric("Оптимистичный", f"{result['if_forecasts']['optimistic']:.2f}")
         st.markdown('</div>', unsafe_allow_html=True)
     
-    # Аналогично для CiteScore
-    st.subheader("📊 CiteScore 2025")
+    # Доверительные интервалы
+    st.markdown("#### Доверительные интервалы Импакт-Фактора (95%)")
+    ci_lower = result['if_forecasts_ci']['lower_95']
+    ci_upper = result['if_forecasts_ci']['upper_95']
+    
+    st.info(f"**Диапазон:** [{ci_lower:.2f} - {ci_upper:.2f}]")
+    
+    st.markdown("---")
+    
+    # CITESCORE
+    st.markdown('<h3 class="section-header">📊 CiteScore 2025</h3>', unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns(3)
     
@@ -277,7 +306,64 @@ def display_main_metrics(result):
         st.metric("Сбалансированный прогноз", f"{result['citescore_forecasts']['balanced']:.2f}")
     
     with col3:
-        st.metric("Статьи для расчета", f"{result['total_articles_cs']}")
+        st.metric("Статьи для расчета", f"{result['total_articles_cs']}",
+                 help=f"Статьи за {result['cs_publication_years'][0]}-{result['cs_publication_years'][-1]}")
+    
+    # Прогнозы CiteScore (по аналогии с импакт-фактором)
+    st.markdown("#### Прогнозы CiteScore на конец 2025")
+    
+    forecast_col1, forecast_col2, forecast_col3 = st.columns(3)
+    
+    with forecast_col1:
+        st.markdown('<div class="citescore-forecast-box">', unsafe_allow_html=True)
+        st.metric("Консервативный", f"{result['citescore_forecasts']['conservative']:.2f}")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with forecast_col2:
+        st.markdown('<div class="citescore-forecast-box">', unsafe_allow_html=True)
+        st.metric("Сбалансированный", f"{result['citescore_forecasts']['balanced']:.2f}")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with forecast_col3:
+        st.markdown('<div class="citescore-forecast-box">', unsafe_allow_html=True)
+        st.metric("Оптимистичный", f"{result['citescore_forecasts']['optimistic']:.2f}")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Доверительные интервалы для CiteScore
+    st.markdown("#### Доверительные интервалы CiteScore (95%)")
+    cs_ci_lower = result['citescore_forecasts_ci']['lower_95']
+    cs_ci_upper = result['citescore_forecasts_ci']['upper_95']
+    
+    st.info(f"**Диапазон:** [{cs_ci_lower:.2f} - {cs_ci_upper:.2f}]")
+
+def display_detailed_analysis(result):
+    """Отображение детального анализа"""
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📈 Распределение цитирований")
+        
+        if result['if_citation_data']:
+            if_data = pd.DataFrame(result['if_citation_data'])
+            st.dataframe(if_data, use_container_width=True)
+        else:
+            st.info("Нет данных о цитированиях для импакт-фактора")
+    
+    with col2:
+        st.subheader("🎯 Анализ самоцитирований")
+        
+        self_citation_rate = result['self_citation_rate']
+        
+        st.metric("Уровень самоцитирований", f"{self_citation_rate:.1%}")
+        st.metric("Примерное количество", f"{result['total_self_citations']:.0f}")
+        
+        if self_citation_rate > 0.2:
+            st.warning("⚠️ Высокий уровень самоцитирований (>20%)")
+        elif self_citation_rate > 0.1:
+            st.info("ℹ️ Умеренный уровень самоцитирований (10-20%)")
+        else:
+            st.success("✅ Нормальный уровень самоцитирований (<10%)")
 
 def display_statistics(result):
     """Отображение статистики"""
@@ -339,5 +425,3 @@ def display_parameters(result):
 
 if __name__ == "__main__":
     main()
-
-
