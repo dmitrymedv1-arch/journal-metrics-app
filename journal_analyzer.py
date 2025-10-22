@@ -214,18 +214,41 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
         current_if = A_if_current / B_if if B_if > 0 else 0
         current_citescore = A_cs_current / B_cs if B_cs > 0 else 0
 
-        # Упрощенные прогнозы
-        multiplier = 1.5  # Упрощенный множитель
+        # Прогнозы для импакт-фактора
+        if_multiplier = 1.5
         if_forecasts = {
-            'conservative': current_if * multiplier * 0.8,
-            'balanced': current_if * multiplier,
-            'optimistic': current_if * multiplier * 1.2
+            'conservative': current_if * if_multiplier * 0.8,
+            'balanced': current_if * if_multiplier,
+            'optimistic': current_if * if_multiplier * 1.2
         }
 
+        # Прогнозы для CiteScore (по аналогии с импакт-фактором)
+        cs_multiplier = 1.5
         citescore_forecasts = {
-            'conservative': current_citescore * multiplier * 0.8,
-            'balanced': current_citescore * multiplier,
-            'optimistic': current_citescore * multiplier * 1.2
+            'conservative': current_citescore * cs_multiplier * 0.8,
+            'balanced': current_citescore * cs_multiplier,
+            'optimistic': current_citescore * cs_multiplier * 1.2
+        }
+
+        # Доверительные интервалы для импакт-фактора
+        if_forecasts_ci = {
+            'mean': if_forecasts['balanced'],
+            'lower_95': if_forecasts['conservative'],
+            'upper_95': if_forecasts['optimistic']
+        }
+
+        # Доверительные интервалы для CiteScore (по аналогии)
+        citescore_forecasts_ci = {
+            'mean': citescore_forecasts['balanced'],
+            'lower_95': citescore_forecasts['conservative'],
+            'upper_95': citescore_forecasts['optimistic']
+        }
+
+        # Множители для отображения
+        multipliers = {
+            'conservative': if_multiplier * 0.8,
+            'balanced': if_multiplier,
+            'optimistic': if_multiplier * 1.2
         }
 
         # Подготовка данных для отображения
@@ -248,21 +271,9 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
             'current_citescore': current_citescore,
             'if_forecasts': if_forecasts,
             'citescore_forecasts': citescore_forecasts,
-            'if_forecasts_ci': {
-                'mean': if_forecasts['balanced'],
-                'lower_95': if_forecasts['conservative'],
-                'upper_95': if_forecasts['optimistic']
-            },
-            'citescore_forecasts_ci': {
-                'mean': citescore_forecasts['balanced'],
-                'lower_95': citescore_forecasts['conservative'],
-                'upper_95': citescore_forecasts['optimistic']
-            },
-            'multipliers': {
-                'conservative': multiplier * 0.8,
-                'balanced': multiplier,
-                'optimistic': multiplier * 1.2
-            },
+            'if_forecasts_ci': if_forecasts_ci,
+            'citescore_forecasts_ci': citescore_forecasts_ci,
+            'multipliers': multipliers,
             'total_cites_if': A_if_current,
             'total_articles_if': B_if,
             'total_cites_cs': A_cs_current,
@@ -275,7 +286,7 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
             'cs_publication_years': cs_publication_years,
             'seasonal_coefficients': {i: 1.0 for i in range(1, 13)},
             'journal_field': journal_field,
-            'self_citation_rate': 0.05,  # Упрощенное значение
+            'self_citation_rate': 0.05,
             'total_self_citations': int(A_if_current * 0.05),
             'issn': issn,
             'journal_name': journal_name,
