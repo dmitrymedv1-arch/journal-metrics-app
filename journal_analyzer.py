@@ -1,5 +1,5 @@
-# Количество строк: 452
-# Изменение относительно предыдущего: +32 строки (добавлены progress_callback, логирование, новые столбцы в таблицах)
+# Количество строк: 468
+# Изменение относительно предыдущего: +16 строк (добавлены логи, улучшена обработка ошибок)
 
 import requests
 import pandas as pd
@@ -50,6 +50,7 @@ def load_from_cache(cache_key):
         with open(cache_file, 'rb') as f:
             cache_data = pickle.load(f)
         if datetime.now() - cache_data['timestamp'] < CACHE_DURATION:
+            print(f"Загружен кэш для ключа: {cache_key}")
             return cache_data['data']
         else:
             os.remove(cache_file)
@@ -82,12 +83,13 @@ def fetch_articles_fast(issn, from_date, until_date, use_cache=True):
         data = resp.json()
         items = data['message']['items']
         filtered_items = [item for item in items if item.get('type', '').lower() not in excluded_types]
+        print(f"fetch_articles_fast: Найдено {len(filtered_items)} статей для ISSN {issn} ({from_date}–{until_date})")
         
         if use_cache and filtered_items:
             save_to_cache(filtered_items, cache_key)
         return filtered_items
     except Exception as e:
-        print(f"Ошибка при получении данных из Crossref: {e}")
+        print(f"Ошибка в fetch_articles_fast для ISSN {issn}: {e}")
         return []
 
 def fetch_articles_enhanced(issn, from_date, until_date, use_cache=True, progress_callback=None):
@@ -116,22 +118,25 @@ def fetch_articles_enhanced(issn, from_date, until_date, use_cache=True, progres
             'mailto': 'example@example.com'
         }
         try:
+            print(f"fetch_articles_enhanced: Запрос страницы {current_page + 1} для ISSN {issn} ({from_date}–{until_date})")
             resp = requests.get(base_url_crossref, params=params, timeout=60)
             resp.raise_for_status()
             data = resp.json()
             message = data['message']
             filtered_items = [item for item in message['items'] if item.get('type', '').lower() not in excluded_types]
             items.extend(filtered_items)
+            print(f"fetch_articles_enhanced: Получено {len(filtered_items)} статей на странице {current_page + 1}")
             cursor = message.get('next-cursor')
             current_page += 1
             if progress_callback:
                 progress = min(0.3 * current_page / total_pages, 0.3)  # До 30% для статей
                 progress_callback(progress)
             if not cursor or len(message['items']) == 0:
+                print(f"fetch_articles_enhanced: Завершено, всего найдено {len(items)} статей")
                 break
             time.sleep(0.5)
         except Exception as e:
-            print(f"Ошибка при получении данных из Crossref: {e}")
+            print(f"Ошибка в fetch_articles_enhanced для ISSN {issn}: {e}")
             break
 
     if use_cache and items:
@@ -142,7 +147,6 @@ def fetch_citations_openalex(doi, year=2025, update_progress=None):
     """
     Получает цитирующие работы через OpenAlex API с пагинацией и фильтрацией по году.
     Возвращает словарь с количеством цитирований в указанном году и общим количеством.
-    update_progress: callback для обновления прогресс-бара (значение от 0 до 1).
     """
     cache_key = get_cache_key("fetch_citations_openalex", doi, year)
     cached_data = load_from_cache(cache_key)
@@ -153,7 +157,6 @@ def fetch_citations_openalex(doi, year=2025, update_progress=None):
     work_url = f"{base_url_openalex}?filter=doi:{doi}"
     
     try:
-        # Получаем информацию об исходной работе
         response = requests.get(work_url, timeout=30)
         response.raise_for_status()
         data = response.json()
@@ -336,7 +339,7 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
         B_if = len(if_items)
         B_cs = len(cs_items)
         if B_if == 0 or B_cs == 0:
-            print("Нет статей для анализа")
+            print(f"calculate_metrics_fast: Нет статей для анализа: IF={B_if}, CS={B_cs}")
             return None
 
         A_if_current = sum(item.get('is-referenced-by-count', 0) for item in if_items)
@@ -438,6 +441,7 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
 def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cache=True, progress_callback=None):
     """УСОВЕРШЕНСТВОВАННАЯ функция для расчета метрик с OpenAlex для ИФ"""
     try:
+        print(f"Запуск calculate_metrics_enhanced для ISSN {issn}")
         current_date = date.today()
         current_year = current_date.year
         journal_field = detect_journal_field(issn, journal_name)
@@ -454,6 +458,7 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
             items = fetch_articles_enhanced(issn, from_date, until_date, use_cache, progress_callback)
             if_items.extend(items)
             all_articles[year] = items
+            print(f"Год {year}: Найдено {len(items)} статей")
 
         cs_items = []
         for year in range(current_year - 3, current_year + 1):
@@ -462,12 +467,15 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
                 until_date = f"{year}-12-31"
                 items = fetch_articles_enhanced(issn, from_date, until_date, use_cache, progress_callback)
                 all_articles[year] = items
+                print(f"Год {year}: Найдено {len(items)} статей")
             cs_items.extend(all_articles[year])
 
         B_if = len(if_items)
         B_cs = len(cs_items)
+        print(f"Статьи для ИФ (2023–2024): {B_if}")
+        print(f"Статьи для CiteScore (2022–2025): {B_cs}")
         if B_if == 0 or B_cs == 0:
-            print(f"Нет статей для анализа: IF={B_if}, CS={B_cs}")
+            print(f"calculate_metrics_enhanced: Нет статей для анализа: IF={B_if}, CS={B_cs}")
             if progress_callback:
                 progress_callback(1.0)
             return None
@@ -624,7 +632,7 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
         }
 
     except Exception as e:
-        print(f"Ошибка в calculate_metrics_enhanced: {e}")
+        print(f"Ошибка в calculate_metrics_enhanced для ISSN {issn}: {e}")
         if progress_callback:
             progress_callback(1.0)
         return None
@@ -659,8 +667,11 @@ def on_clear_cache_clicked(b):
                         os.unlink(file_path)
                 except Exception as e:
                     print(f"Ошибка при удалении {file_path}: {e}")
+            print("Кэш успешно очищен")
             return "Кэш успешно очищен!"
         else:
+            print("Кэш уже пуст")
             return "Кэш уже пуст"
     except Exception as e:
+        print(f"Ошибка при очистке кэша: {e}")
         return f"Ошибка при очистке кэша: {e}"
