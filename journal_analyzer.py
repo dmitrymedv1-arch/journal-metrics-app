@@ -10,6 +10,7 @@ import pickle
 import hashlib
 import os
 import warnings
+from dateutil.relativedelta import relativedelta
 warnings.filterwarnings('ignore')
 
 base_url = "https://api.crossref.org/works"
@@ -515,6 +516,96 @@ def bootstrap_confidence_intervals(data, n_bootstrap=1000, confidence=0.95):
     mean_value = np.mean(data)
 
     return mean_value, lower_bound, upper_bound
+
+# *** НОВЫЕ ФУНКЦИИ ДЛЯ ДИНАМИЧЕСКОГО РЕЖИМА ***
+def get_dynamic_periods_current_date(analysis_date, metric_type):
+    """ДИНАМИЧЕСКИЕ ПЕРИОДЫ ОТ ТЕКУЩЕЙ ДАТЫ"""
+    if metric_type == 'IF':
+        articles_start = analysis_date - relativedelta(months=42)
+        articles_end = analysis_date - relativedelta(months=18)
+        cites_start = analysis_date - relativedelta(months=18)
+        cites_end = analysis_date - relativedelta(months=6)
+    else:  # CiteScore
+        articles_start = analysis_date - relativedelta(months=48)
+        articles_end = analysis_date
+        cites_start = analysis_date - relativedelta(months=48)
+        cites_end = analysis_date
+    
+    return {
+        'articles': (articles_start.strftime('%Y-%m-%d'), articles_end.strftime('%Y-%m-%d')),
+        'citations': (cites_start.strftime('%Y-%m-%d'), cites_end.strftime('%Y-%m-%d')),
+        'analysis_date': analysis_date
+    }
+
+def calculate_dynamic_current(issn, analysis_date, metric_type, use_cache=True):
+    """ДИНАМИЧЕСКИЙ РАСЧЕТ ОТ ТЕКУЩЕЙ ДАТЫ"""
+    periods = get_dynamic_periods_current_date(analysis_date, metric_type)
+    
+    articles_start, articles_end = periods['articles']
+    articles = fetch_articles_fast(issn, articles_start, articles_end, use_cache)
+    B = len(articles)
+    article_dois = {item.get('DOI') for item in articles if item.get('DOI')}
+    
+    # Быстрый расчет цитирований (из Crossref)
+    A = sum(item.get('is-referenced-by-count', 0) for item in articles)
+    
+    metric_value = A / B if B > 0 else 0
+    
+    return {
+        'value': metric_value,
+        'articles_count': B,
+        'citations_count': A,
+        'periods': periods,
+        'analysis_date': analysis_date,
+        'metric_type': metric_type
+    }
+
+def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cache=True):
+    """ДИНАМИЧЕСКИЙ РЕЖИМ"""
+    try:
+        current_date = date.today()
+        journal_field = detect_journal_field(issn, journal_name)
+        seasonal_coefficients = get_seasonal_coefficients(journal_field)
+        
+        # ДИНАМИЧЕСКИЙ IF
+        if_result = calculate_dynamic_current(issn, current_date, 'IF', use_cache)
+        # ДИНАМИЧЕСКИЙ CiteScore
+        cs_result = calculate_dynamic_current(issn, current_date, 'CiteScore', use_cache)
+        
+        # Совместимость с текущим форматом
+        return {
+            'mode': 'DYNAMIC_CURRENT_DATE',
+            'current_if': if_result['value'],
+            'current_citescore': cs_result['value'],
+            'if_details': if_result,
+            'cs_details': cs_result,
+            'analysis_date': current_date,
+            'issn': issn,
+            'journal_name': journal_name,
+            'journal_field': journal_field,
+            'seasonal_coefficients': seasonal_coefficients,
+            # Заглушки для совместимости
+            'if_forecasts': {'balanced': if_result['value']},
+            'citescore_forecasts': {'balanced': cs_result['value']},
+            'total_articles_if': if_result['articles_count'],
+            'total_cites_if': if_result['citations_count'],
+            'total_articles_cs': cs_result['articles_count'],
+            'total_cites_cs': cs_result['citations_count'],
+            'self_citation_rate': 0.05,
+            'total_self_citations': int(if_result['citations_count'] * 0.05),
+            'if_publication_years': [current_date.year-3, current_date.year-1],
+            'cs_publication_years': [current_date.year-4, current_date.year],
+            'if_citation_data': [],
+            'cs_citation_data': [],
+            'multipliers': {'balanced': 1.0},
+            'bootstrap_stats': {
+                'if_mean': if_result['value'],
+                'cs_mean': cs_result['value']
+            }
+        }
+    except Exception as e:
+        print(f"Ошибка в calculate_metrics_dynamic: {e}")
+        return None
 
 def on_clear_cache_clicked(b):
     """Функция для очистки кэша"""
