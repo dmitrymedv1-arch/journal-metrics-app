@@ -1,10 +1,5 @@
-# Количество строк: 512
-# Изменение: +37 строк относительно версии с 475 строками
-# +15 строк: Параллельная обработка в fetch_citations_openalex и fetch_articles_enhanced
-# +10 строк: Оптимизация пагинации (rows в Crossref, publication_date в OpenAlex)
-# +5 строк: Улучшение прогресс-бара (обновления по DOI)
-# +5 строк: Фильтрация DOI с cited_by_count == 0
-# +7 строк: Новая функция fetch_journal_name
+# Количество строк: 465
+# Изменение: +3 строки (обновлена calculate_metrics_dynamic для OpenAlex в CiteScore)
 
 import requests
 import pandas as pd
@@ -18,14 +13,12 @@ import hashlib
 import os
 import warnings
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
 warnings.filterwarnings('ignore')
 
-base_url_crossref = "https://api.crossref.org"
-base_url_openalex = "https://api.openalex.org"
+base_url_crossref = "https://api.crossref.org/works"
+base_url_openalex = "https://api.openalex.org/works"
 CACHE_DIR = "journal_analysis_cache"
-CACHE_DURATION = timedelta(days=7)  # Увеличен срок кэша до 7 дней
+CACHE_DURATION = timedelta(hours=24)
 
 def validate_issn(issn):
     """Проверка формата ISSN"""
@@ -72,52 +65,6 @@ def load_from_cache(cache_key):
     except:
         return None
 
-def fetch_journal_name(issn):
-    """Получает название журнала через Crossref, с fallback на OpenAlex"""
-    if not validate_issn(issn):
-        return "Неизвестный журнал"
-
-    # Попытка через Crossref
-    cache_key = get_cache_key("fetch_journal_name_crossref", issn)
-    cached_data = load_from_cache(cache_key)
-    if cached_data is not None:
-        return cached_data
-
-    try:
-        url = f"{base_url_crossref}/journals/{issn}"
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        journal_name = data.get('message', {}).get('title', 'Неизвестный журнал')
-        if journal_name != 'Неизвестный журнал':
-            print(f"Название журнала из Crossref: {journal_name}")
-            save_to_cache(journal_name, cache_key)
-            return journal_name
-    except Exception as e:
-        print(f"Ошибка получения названия журнала из Crossref для ISSN {issn}: {e}")
-
-    # Fallback на OpenAlex
-    cache_key = get_cache_key("fetch_journal_name_openalex", issn)
-    cached_data = load_from_cache(cache_key)
-    if cached_data is not None:
-        return cached_data
-
-    try:
-        url = f"{base_url_openalex}/venues?filter=issn:{issn}"
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
-        results = data.get('results', [])
-        if results:
-            journal_name = results[0].get('display_name', 'Неизвестный журнал')
-            print(f"Название журнала из OpenAlex: {journal_name}")
-            save_to_cache(journal_name, cache_key)
-            return journal_name
-    except Exception as e:
-        print(f"Ошибка получения названия журнала из OpenAlex для ISSN {issn}: {e}")
-
-    return "Неизвестный журнал"
-
 def fetch_articles_enhanced(issn, from_date, until_date, use_cache=True, progress_callback=None):
     """Улучшенная функция для получения статей с пагинацией через Crossref"""
     if not validate_issn(issn):
@@ -137,58 +84,42 @@ def fetch_articles_enhanced(issn, from_date, until_date, use_cache=True, progres
         'book-review', 'news', 'announcement', 'abstract'
     }
 
-    try:
-        # Первый запрос для получения total-results
+    total_pages = 10  # Примерное число страниц
+    current_page = 0
+
+    while True:
         params = {
             'filter': f'issn:{issn},from-pub-date:{from_date},until-pub-date:{until_date}',
-            'rows': 0,
+            'rows': 1000,
+            'cursor': cursor,
             'mailto': 'example@example.com'
         }
-        resp = requests.get(f"{base_url_crossref}/works", params=params, timeout=30)
-        resp.raise_for_status()
-        total_results = resp.json()['message']['total-results']
-        rows = min(total_results, 1000) if total_results > 0 else 100
-        print(f"fetch_articles_enhanced: Всего статей {total_results}, rows={rows}")
-
-        current_page = 0
-        total_pages = (total_results // rows) + 1 if total_results > 0 else 1
-
-        while cursor:
-            params = {
-                'filter': f'issn:{issn},from-pub-date:{from_date},until-pub-date:{until_date}',
-                'rows': rows,
-                'cursor': cursor,
-                'mailto': 'example@example.com'
-            }
-            try:
-                print(f"fetch_articles_enhanced: Запрос страницы {current_page + 1} для ISSN {issn} ({from_date}–{until_date})")
-                resp = requests.get(f"{base_url_crossref}/works", params=params, timeout=60)
-                resp.raise_for_status()
-                data = resp.json()
-                message = data['message']
-                filtered_items = []
-                for item in message['items']:
-                    item_type = item.get('type', '').lower()
-                    print(f"Тип статьи: {item_type}, DOI: {item.get('DOI', 'N/A')}")
-                    if item_type not in excluded_types:
-                        filtered_items.append(item)
-                items.extend(filtered_items)
-                print(f"fetch_articles_enhanced: Получено {len(filtered_items)} статей на странице {current_page + 1}")
-                cursor = message.get('next-cursor')
-                current_page += 1
-                if progress_callback:
-                    progress = min(0.2 * current_page / total_pages, 0.2)  # 0–20% для статей
-                    progress_callback(progress)
-                if not cursor or len(message['items']) == 0:
-                    print(f"fetch_articles_enhanced: Завершено, всего найдено {len(items)} статей")
-                    break
-                time.sleep(0.2)
-            except Exception as e:
-                print(f"Ошибка в fetch_articles_enhanced для ISSN {issn}: {e}")
+        try:
+            print(f"fetch_articles_enhanced: Запрос страницы {current_page + 1} для ISSN {issn} ({from_date}–{until_date})")
+            resp = requests.get(base_url_crossref, params=params, timeout=60)
+            resp.raise_for_status()
+            data = resp.json()
+            message = data['message']
+            filtered_items = []
+            for item in message['items']:
+                item_type = item.get('type', '').lower()
+                print(f"Тип статьи: {item_type}, DOI: {item.get('DOI', 'N/A')}")
+                if item_type not in excluded_types:
+                    filtered_items.append(item)
+            items.extend(filtered_items)
+            print(f"fetch_articles_enhanced: Получено {len(filtered_items)} статей на странице {current_page + 1}")
+            cursor = message.get('next-cursor')
+            current_page += 1
+            if progress_callback:
+                progress = min(0.3 * current_page / total_pages, 0.3)
+                progress_callback(progress)
+            if not cursor or len(message['items']) == 0:
+                print(f"fetch_articles_enhanced: Завершено, всего найдено {len(items)} статей")
                 break
-    except Exception as e:
-        print(f"Ошибка получения total-results для ISSN {issn}: {e}")
-        return []
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"Ошибка в fetch_articles_enhanced для ISSN {issn}: {e}")
+            break
 
     if use_cache and items:
         save_to_cache(items, cache_key)
@@ -196,7 +127,8 @@ def fetch_articles_enhanced(issn, from_date, until_date, use_cache=True, progres
 
 def fetch_citations_openalex(doi, citation_start_date, citation_end_date, update_progress=None):
     """
-    Получает цитирующие работы через OpenAlex API с фильтрацией по дате и пропуском нулевых цитирований.
+    Получает цитирующие работы через OpenAlex API с пагинацией и фильтрацией по периоду.
+    Возвращает словарь с количеством цитирований в указанном периоде и общим количеством.
     """
     cache_key = get_cache_key("fetch_citations_openalex", doi, citation_start_date, citation_end_date)
     cached_data = load_from_cache(cache_key)
@@ -204,8 +136,8 @@ def fetch_citations_openalex(doi, citation_start_date, citation_end_date, update
         return cached_data
 
     doi = doi.strip().replace('https://doi.org/', '') if doi.startswith('https://doi.org/') else doi.strip()
-    work_url = f"{base_url_openalex}/works?filter=doi:{doi}"
-
+    work_url = f"{base_url_openalex}?filter=doi:{doi}"
+    
     try:
         response = requests.get(work_url, timeout=30)
         response.raise_for_status()
@@ -215,32 +147,24 @@ def fetch_citations_openalex(doi, citation_start_date, citation_end_date, update
             print(f"DOI {doi}: Не найдено в OpenAlex")
             save_to_cache({'doi': doi, 'count': 0, 'total_count': 0, 'all_citations': [], 'publication_year': None}, cache_key)
             return {'doi': doi, 'count': 0, 'total_count': 0, 'all_citations': [], 'publication_year': None}
-
+        
         work_data = results[0]
         original_title = work_data.get('title', 'Нет названия')
         publication_year = work_data.get('publication_year', None)
-        cited_by_count = work_data.get('cited_by_count', 0)
-        print(f"DOI {doi}: Найдена работа '{original_title[:50]}...', Год: {publication_year}, Цитирований: {cited_by_count}")
-
-        if cited_by_count == 0:
-            print(f"DOI {doi}: Пропущена пагинация (0 цитирований)")
-            result = {'doi': doi, 'count': 0, 'total_count': 0, 'all_citations': [], 'publication_year': publication_year}
-            save_to_cache(result, cache_key)
-            if update_progress:
-                update_progress(1.0)  # Полный прогресс для DOI
-            return result
-
+        print(f"DOI {doi}: Найдена работа '{original_title[:50]}...', Год: {publication_year}")
+        
         work_id = work_data['id']
         work_openalex_id = work_id.split('/')[-1]
+        cited_by_count = work_data.get('cited_by_count', 0)
+        print(f"DOI {doi}: Общее цитирований (OpenAlex): {cited_by_count}")
+        
         citing_works = []
         page = 1
         next_cursor = None
         total_processed = 0
-
-        start_date_str = citation_start_date.strftime('%Y-%m-%d')
-        end_date_str = citation_end_date.strftime('%Y-%m-%d')
+        
         while True:
-            url = f"{base_url_openalex}/works?filter=cites:{work_openalex_id},publication_date:{start_date_str}–{end_date_str}&per-page=200"
+            url = f"{base_url_openalex}?filter=cites:{work_openalex_id}&per-page=200"
             if next_cursor:
                 url += f"&cursor={next_cursor}"
             try:
@@ -249,37 +173,42 @@ def fetch_citations_openalex(doi, citation_start_date, citation_end_date, update
                 data = response.json()
                 results_count = len(data.get('results', []))
                 print(f"DOI {doi}: Страница {page}, найдено {results_count} цитирований")
-
+                
                 for work in data['results']:
                     citing_doi = work.get('doi', '').replace('https://doi.org/', '') if work.get('doi') else 'Нет DOI'
                     citing_title = work.get('title', 'Нет названия')
                     publication_date_str = work.get('publication_date', 'Нет даты')
                     if publication_date_str != 'Нет даты':
-                        citing_works.append({
-                            'DOI': citing_doi,
-                            'Название статьи': citing_title,
-                            'Дата публикации': publication_date_str
-                        })
+                        try:
+                            pub_date = datetime.strptime(publication_date_str, '%Y-%m-%d').date()
+                            if citation_start_date <= pub_date <= citation_end_date:
+                                citing_works.append({
+                                    'DOI': citing_doi,
+                                    'Название статьи': citing_title,
+                                    'Дата публикации': publication_date_str
+                                })
+                        except ValueError:
+                            pass
                     total_processed += 1
-
+                
                 next_cursor = data.get('meta', {}).get('next_cursor')
                 if not next_cursor:
                     print(f"DOI {doi}: Достигнут конец списка")
                     break
-
+                
                 page += 1
                 if update_progress and cited_by_count > 0:
-                    p = min(1.0, total_processed / cited_by_count)
-                    update_progress(p)
+                    progress = min(1.0, total_processed / cited_by_count)
+                    update_progress(progress)
                 time.sleep(0.1)
-
+                
             except requests.exceptions.RequestException as e:
                 print(f"DOI {doi}: Ошибка при запросе страницы {page}: {e}")
                 break
             except Exception as e:
                 print(f"DOI {doi}: Ошибка при обработке страницы {page}: {e}")
                 break
-
+        
         count_period = len(citing_works)
         print(f"DOI {doi}: Цитирований в периоде {citation_start_date}–{citation_end_date}: {count_period} из {cited_by_count}")
         result = {
@@ -290,10 +219,8 @@ def fetch_citations_openalex(doi, citation_start_date, citation_end_date, update
             'publication_year': publication_year
         }
         save_to_cache(result, cache_key)
-        if update_progress:
-            update_progress(1.0)  # Полный прогресс для DOI
         return result
-
+        
     except requests.exceptions.RequestException as e:
         print(f"DOI {doi}: Ошибка OpenAlex API: {e}")
         return {'doi': doi, 'count': 0, 'total_count': 0, 'all_citations': [], 'publication_year': None}
@@ -358,7 +285,6 @@ def detect_journal_field(issn, journal_name):
 def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=True):
     """БЫСТРАЯ функция для расчета метрик через Crossref"""
     try:
-        journal_name = fetch_journal_name(issn) if journal_name == "Не указано" else journal_name
         current_date = date.today()
         current_year = current_date.year
         journal_field = detect_journal_field(issn, journal_name)
@@ -366,22 +292,19 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
         if_publication_years = [current_year - 2, current_year - 1]
         cs_publication_years = list(range(current_year - 3, current_year + 1))
 
-        # Параллельный сбор статей
-        def fetch_year(year):
+        if_items = []
+        for year in if_publication_years:
             from_date = f"{year}-01-01"
             until_date = f"{year}-12-31"
-            return fetch_articles_enhanced(issn, from_date, until_date, use_cache)
+            items = fetch_articles_enhanced(issn, from_date, until_date, use_cache)
+            if_items.extend(items)
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            if_futures = [executor.submit(fetch_year, year) for year in if_publication_years]
-            if_items = []
-            for future in as_completed(if_futures):
-                if_items.extend(future.result())
-
-            cs_futures = [executor.submit(fetch_year, year) for year in cs_publication_years]
-            cs_items = []
-            for future in as_completed(cs_futures):
-                cs_items.extend(future.result())
+        cs_items = []
+        for year in cs_publication_years:
+            from_date = f"{year}-01-01"
+            until_date = f"{year}-12-31"
+            items = fetch_articles_enhanced(issn, from_date, until_date, use_cache)
+            cs_items.extend(items)
 
         B_if = len(if_items)
         B_cs = len(cs_items)
@@ -397,7 +320,7 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
 
         seasonal_coefficients = get_seasonal_coefficients(journal_field)
         multiplier = calculate_weighted_multiplier(current_date, seasonal_coefficients, "balanced")
-
+        
         if_forecasts = {
             'conservative': current_if * max(1.0, multiplier * 0.9),
             'balanced': current_if * max(1.0, multiplier),
@@ -466,8 +389,7 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
 def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cache=True, progress_callback=None):
     """УСОВЕРШЕНСТВОВАННАЯ функция для расчета метрик с OpenAlex для ИФ"""
     try:
-        journal_name = fetch_journal_name(issn) if journal_name == "Не указано" else journal_name
-        print(f"Запуск calculate_metrics_enhanced для ISSN {issn}, журнал: {journal_name}")
+        print(f"Запуск calculate_metrics_enhanced для ISSN {issn}")
         if not validate_issn(issn):
             print(f"Неверный формат ISSN: {issn}")
             return None
@@ -480,25 +402,29 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
             progress_callback(0.0)
             print("Начало сбора статей из Crossref...")
 
+        # Получение статей для ИФ (2023–2024) и CiteScore (2022–2025)
         if_publication_years = [current_year - 2, current_year - 1]
         cs_publication_years = list(range(current_year - 3, current_year + 1))
 
-        # Параллельный сбор статей
-        def fetch_year(year):
+        all_articles = {}
+        if_items = []
+        for year in if_publication_years:
             from_date = f"{year}-01-01"
             until_date = f"{year}-12-31"
-            return fetch_articles_enhanced(issn, from_date, until_date, use_cache, progress_callback)
+            items = fetch_articles_enhanced(issn, from_date, until_date, use_cache, progress_callback)
+            if_items.extend(items)
+            all_articles[year] = items
+            print(f"Год {year}: Найдено {len(items)} статей")
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            if_futures = [executor.submit(fetch_year, year) for year in if_publication_years]
-            if_items = []
-            for future in as_completed(if_futures):
-                if_items.extend(future.result())
-
-            cs_futures = [executor.submit(fetch_year, year) for year in cs_publication_years]
-            cs_items = []
-            for future in as_completed(cs_futures):
-                cs_items.extend(future.result())
+        cs_items = []
+        for year in cs_publication_years:
+            if year not in all_articles:
+                from_date = f"{year}-01-01"
+                until_date = f"{year}-12-31"
+                items = fetch_articles_enhanced(issn, from_date, until_date, use_cache, progress_callback)
+                all_articles[year] = items
+                print(f"Год {year}: Найдено {len(items)} статей")
+            cs_items.extend(all_articles[year])
 
         B_if = len(if_items)
         B_cs = len(cs_items)
@@ -511,54 +437,45 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
             return None
 
         if progress_callback:
-            progress_callback(0.4)
+            progress_callback(0.3)
             print("Начало анализа цитирований через OpenAlex...")
 
-        # Параллельная обработка цитирований для ИФ
+        # Расчет ИФ: цитирования в 2025 году через OpenAlex
         A_if_current = 0
         valid_dois = 0
         if_citation_data = []
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [
-                executor.submit(
-                    fetch_citations_openalex,
-                    item.get('DOI', 'N/A'),
-                    date(current_year, 1, 1),
-                    date(current_year, 12, 31),
-                    lambda p: progress_callback(0.4 + 0.3 * (i + p) / B_if) if progress_callback else None
+        for i, item in enumerate(if_items):
+            doi = item.get('DOI', 'N/A')
+            crossref_cites = item.get('is-referenced-by-count', 0)
+            if doi != 'N/A':
+                result = fetch_citations_openalex(
+                    doi,
+                    citation_start_date=date(current_year, 1, 1),
+                    citation_end_date=date(current_year, 12, 31),
+                    update_progress=lambda p: progress_callback(0.3 + 0.6 * (i + 1) / B_if * p) if progress_callback else None
                 )
-                for i, item in enumerate(if_items) if item.get('DOI', 'N/A') != 'N/A'
-            ]
-            for i, future in enumerate(as_completed(futures)):
-                result = future.result()
-                crossref_cites = next((item.get('is-referenced-by-count', 0) for item in if_items if item.get('DOI', 'N/A') == result['doi']), 0)
                 A_if_current += result['count']
                 valid_dois += 1
                 if_citation_data.append({
-                    'DOI': result['doi'],
-                    'Год публикации': next((item.get('published', {}).get('date-parts', [[None]])[0][0] for item in if_items if item.get('DOI', 'N/A') == result['doi']), None),
+                    'DOI': doi,
+                    'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
                     'Цитирования (Crossref)': crossref_cites,
                     'Цитирования (OpenAlex)': result['total_count'],
                     'Цитирования в периоде': result['count']
                 })
-                if progress_callback:
-                    progress_callback(0.4 + 0.3 * (i + 1) / len(futures))
-
-        # Добавление статей без DOI
-        for item in if_items:
-            if item.get('DOI', 'N/A') == 'N/A':
-                print(f"Пропущен DOI: {item.get('DOI', 'N/A')}")
+            else:
+                print(f"Пропущен DOI: {doi}")
                 if_citation_data.append({
-                    'DOI': item.get('DOI', 'N/A'),
+                    'DOI': doi,
                     'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
-                    'Цитирования (Crossref)': item.get('is-referenced-by-count', 0),
+                    'Цитирования (Crossref)': crossref_cites,
                     'Цитирования (OpenAlex)': 0,
                     'Цитирования в периоде': 0
                 })
-
+            
         print(f"Обработано DOI: {valid_dois}/{B_if}, Цитирований в {current_year}: {A_if_current}")
 
-        # CiteScore через Crossref
+        # Расчет CiteScore: цитирования из Crossref
         A_cs_current = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
         cs_citation_data = [
             {
@@ -636,8 +553,7 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
 def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cache=True, progress_callback=None):
     """ДИНАМИЧЕСКАЯ функция для расчета метрик с динамическими периодами"""
     try:
-        journal_name = fetch_journal_name(issn) if journal_name == "Не указано" else journal_name
-        print(f"Запуск calculate_metrics_dynamic для ISSN {issn}, журнал: {journal_name}")
+        print(f"Запуск calculate_metrics_dynamic для ISSN {issn}")
         if not validate_issn(issn):
             print(f"Неверный формат ISSN: {issn}")
             return None
@@ -650,33 +566,33 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             print("Начало сбора статей из Crossref...")
 
         # Периоды для ИФ
-        if_citation_start = current_date - timedelta(days=18*30)
-        if_citation_end = current_date - timedelta(days=6*30)
-        if_article_start = current_date - timedelta(days=42*30)
-        if_article_end = current_date - timedelta(days=18*30)
+        if_citation_start = current_date - timedelta(days=18*30)  # 18 месяцев назад
+        if_citation_end = current_date - timedelta(days=6*30)      # 6 месяцев назад
+        if_article_start = current_date - timedelta(days=42*30)     # 42 месяца назад
+        if_article_end = current_date - timedelta(days=18*30)       # 18 месяцев назад
 
         # Периоды для CiteScore
-        cs_citation_start = current_date - timedelta(days=52*30)
-        cs_citation_end = current_date - timedelta(days=4*30)
+        cs_citation_start = current_date - timedelta(days=52*30)    # 52 месяца назад
+        cs_citation_end = current_date - timedelta(days=4*30)       # 4 месяца назад
         cs_article_start = cs_citation_start
         cs_article_end = cs_citation_end
 
-        # Сбор статей для ИФ
+        # Получение статей для ИФ
         if_items = fetch_articles_enhanced(
             issn,
             if_article_start.strftime('%Y-%m-%d'),
             if_article_end.strftime('%Y-%m-%d'),
             use_cache,
-            lambda p: progress_callback(p * 0.2) if progress_callback else None  # 0–20%
+            progress_callback
         )
 
-        # Сбор статей для CiteScore
+        # Получение статей для CiteScore
         cs_items = fetch_articles_enhanced(
             issn,
             cs_article_start.strftime('%Y-%m-%d'),
             cs_article_end.strftime('%Y-%m-%d'),
             use_cache,
-            lambda p: progress_callback(0.2 + p * 0.2) if progress_callback else None  # 20–40%
+            progress_callback
         )
 
         B_if = len(if_items)
@@ -690,93 +606,77 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             return None
 
         if progress_callback:
-            progress_callback(0.4)
+            progress_callback(0.3)
             print("Начало анализа цитирований через OpenAlex...")
 
-        # Параллельная обработка цитирований для ИФ
+        # Расчет ИФ: цитирования в указанном периоде через OpenAlex
         A_if_current = 0
         valid_dois_if = 0
         if_citation_data = []
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [
-                executor.submit(
-                    fetch_citations_openalex,
-                    item.get('DOI', 'N/A'),
-                    if_citation_start,
-                    if_citation_end,
-                    lambda p: progress_callback(0.4 + 0.3 * (i + p) / B_if) if progress_callback else None
+        for i, item in enumerate(if_items):
+            doi = item.get('DOI', 'N/A')
+            crossref_cites = item.get('is-referenced-by-count', 0)
+            if doi != 'N/A':
+                result = fetch_citations_openalex(
+                    doi,
+                    citation_start_date=if_citation_start,
+                    citation_end_date=if_citation_end,
+                    update_progress=lambda p: progress_callback(0.3 + 0.3 * (i + 1) / B_if * p) if progress_callback else None
                 )
-                for i, item in enumerate(if_items) if item.get('DOI', 'N/A') != 'N/A'
-            ]
-            for i, future in enumerate(as_completed(futures)):
-                result = future.result()
-                crossref_cites = next((item.get('is-referenced-by-count', 0) for item in if_items if item.get('DOI', 'N/A') == result['doi']), 0)
                 A_if_current += result['count']
                 valid_dois_if += 1
                 if_citation_data.append({
-                    'DOI': result['doi'],
-                    'Год публикации': next((item.get('published', {}).get('date-parts', [[None]])[0][0] for item in if_items if item.get('DOI', 'N/A') == result['doi']), None),
+                    'DOI': doi,
+                    'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
                     'Цитирования (Crossref)': crossref_cites,
                     'Цитирования (OpenAlex)': result['total_count'],
                     'Цитирования в периоде': result['count']
                 })
-                if progress_callback:
-                    progress_callback(0.4 + 0.3 * (i + 1) / len(futures))
-
-        for item in if_items:
-            if item.get('DOI', 'N/A') == 'N/A':
-                print(f"Пропущен DOI: {item.get('DOI', 'N/A')}")
+            else:
+                print(f"Пропущен DOI: {doi}")
                 if_citation_data.append({
-                    'DOI': item.get('DOI', 'N/A'),
+                    'DOI': doi,
                     'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
-                    'Цитирования (Crossref)': item.get('is-referenced-by-count', 0),
+                    'Цитирования (Crossref)': crossref_cites,
                     'Цитирования (OpenAlex)': 0,
                     'Цитирования в периоде': 0
                 })
-
+            
         print(f"Обработано DOI для ИФ: {valid_dois_if}/{B_if}, Цитирований в {if_citation_start}–{if_citation_end}: {A_if_current}")
 
-        # Параллельная обработка цитирований для CiteScore
+        # Расчет CiteScore: цитирования через OpenAlex
         A_cs_current = 0
         valid_dois_cs = 0
         cs_citation_data = []
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [
-                executor.submit(
-                    fetch_citations_openalex,
-                    item.get('DOI', 'N/A'),
-                    cs_citation_start,
-                    cs_citation_end,
-                    lambda p: progress_callback(0.7 + 0.2 * (i + p) / B_cs) if progress_callback else None
+        for i, item in enumerate(cs_items):
+            doi = item.get('DOI', 'N/A')
+            crossref_cites = item.get('is-referenced-by-count', 0)
+            if doi != 'N/A':
+                result = fetch_citations_openalex(
+                    doi,
+                    citation_start_date=cs_citation_start,
+                    citation_end_date=cs_citation_end,
+                    update_progress=lambda p: progress_callback(0.6 + 0.3 * (i + 1) / B_cs * p) if progress_callback else None
                 )
-                for i, item in enumerate(cs_items) if item.get('DOI', 'N/A') != 'N/A'
-            ]
-            for i, future in enumerate(as_completed(futures)):
-                result = future.result()
-                crossref_cites = next((item.get('is-referenced-by-count', 0) for item in cs_items if item.get('DOI', 'N/A') == result['doi']), 0)
                 A_cs_current += result['count']
                 valid_dois_cs += 1
                 cs_citation_data.append({
-                    'DOI': result['doi'],
-                    'Год публикации': next((item.get('published', {}).get('date-parts', [[None]])[0][0] for item in cs_items if item.get('DOI', 'N/A') == result['doi']), None),
+                    'DOI': doi,
+                    'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
                     'Цитирования (Crossref)': crossref_cites,
                     'Цитирования (OpenAlex)': result['total_count'],
                     'Цитирования в периоде': result['count']
                 })
-                if progress_callback:
-                    progress_callback(0.7 + 0.2 * (i + 1) / len(futures))
-
-        for item in cs_items:
-            if item.get('DOI', 'N/A') == 'N/A':
-                print(f"Пропущен DOI: {item.get('DOI', 'N/A')}")
+            else:
+                print(f"Пропущен DOI: {doi}")
                 cs_citation_data.append({
-                    'DOI': item.get('DOI', 'N/A'),
+                    'DOI': doi,
                     'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
-                    'Цитирования (Crossref)': item.get('is-referenced-by-count', 0),
+                    'Цитирования (Crossref)': crossref_cites,
                     'Цитирования (OpenAlex)': 0,
                     'Цитирования в периоде': 0
                 })
-
+            
         print(f"Обработано DOI для CiteScore: {valid_dois_cs}/{B_cs}, Цитирований в {cs_citation_start}–{cs_citation_end}: {A_cs_current}")
 
         current_if = A_if_current / B_if if B_if > 0 else 0
