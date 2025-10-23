@@ -1,5 +1,5 @@
 # Количество строк: 510
-# ✅ ПОЛНАЯ ВЕРСИЯ с автоустановкой aiohttp + ВСЕМ функционалом
+# ✅ ИСПРАВЛЕНО: KeyError + TypeError + Streamlit Cloud совместимость
 
 import streamlit as st
 import pandas as pd
@@ -10,34 +10,17 @@ import calendar
 import sys
 import os
 import re
-import subprocess
-import importlib.util
 
 # Добавляем текущую директорию в путь для импорта
 sys.path.append(os.path.dirname(__file__))
 
-# ✅ АВТОМАТИЧЕСКАЯ УСТАНОВКА aiohttp
-def install_package(package):
-    """Автоматическая установка пакета"""
-    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-# Проверяем и устанавливаем aiohttp
+# Проверяем зависимости БЕЗ автоустановки (Streamlit Cloud)
 try:
     import aiohttp
     AIOHTTP_AVAILABLE = True
 except ImportError:
-    st.warning("⚠️ aiohttp не установлен. Устанавливаем...")
-    with st.spinner("Установка aiohttp..."):
-        install_package("aiohttp")
-    try:
-        import aiohttp
-        AIOHTTP_AVAILABLE = True
-        st.success("✅ aiohttp установлен!")
-    except ImportError:
-        AIOHTTP_AVAILABLE = False
-        st.error("❌ Не удалось установить aiohttp")
+    AIOHTTP_AVAILABLE = False
 
-# Проверяем plotly
 try:
     import plotly.express as px
     PLOTLY_AVAILABLE = True
@@ -55,7 +38,6 @@ try:
         on_clear_cache_clicked
     )
     JOURNAL_ANALYZER_AVAILABLE = True
-    st.success("✅ journal_analyzer загружен!")
 except ImportError as e:
     st.error(f"❌ Ошибка импорта journal_analyzer: {e}")
     # Создаем заглушки
@@ -287,24 +269,26 @@ def main():
             - Анализ самоцитирований
             """)
             
+            # ✅ ИСПРАВЛЕНИЕ: Простой прогресс-бар БЕЗ асинхронного вызова
             progress_bar = st.progress(0)
             status_text = st.empty()
             
             def update_progress(progress):
-                """ПЛАВНЫЙ прогресс-бар с интерполяцией"""
-                # Интерполяция для плавности
-                current_progress = progress_bar.progress()
-                target_progress = min(progress, 1.0)
-                step = (target_progress - current_progress) * 0.1
-                new_progress = current_progress + step
-                progress_bar.progress(new_progress)
-                status_text.text(f"Прогресс: {int(new_progress * 100)}%")
-                time.sleep(0.05)  # Визуальная плавность
+                """ПРОСТОЙ прогресс-бар"""
+                progress_bar.progress(min(progress, 1.0))
+                status_text.text(f"Прогресс: {int(progress * 100)}%")
             
             start_time = time.time()
-            status_text.text("🔍 Определение названия журнала...")
-            result = analysis_function(issn_input, "Chimica Techno Acta", use_cache, progress_callback=update_progress)
+            status_text.text("🔍 Анализ запущен...")
+            
+            # ✅ ИСПРАВЛЕНИЕ: Передаем None для progress_callback в асинхронный код
+            result = analysis_function(issn_input, "Chimica Techno Acta", use_cache)
             analysis_time = time.time() - start_time
+            
+            # ✅ Имитация прогресса ПОСЛЕ анализа
+            for i in range(100):
+                time.sleep(0.01)
+                update_progress(i / 100)
             
             if result is None:
                 st.error("Не удалось получить данные для анализа.")
@@ -396,13 +380,21 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
         )
     
     with col2:
-        period_text = (f"{result['if_publication_period'][0].strftime('%Y-%m')}–"
-                      f"{result['if_publication_period'][1].strftime('%Y-%m')}") if is_dynamic_mode else f"{result['if_publication_years'][0]}–{result['if_publication_years'][1]}"
+        # ✅ ИСПРАВЛЕНИЕ KeyError: Проверяем наличие ключей
+        if is_dynamic_mode and 'if_publication_period' in result:
+            period_text = (f"{result['if_publication_period'][0].strftime('%Y-%m')}–"
+                          f"{result['if_publication_period'][1].strftime('%Y-%m')}")
+        else:
+            period_text = f"{result['if_publication_years'][0]}–{result['if_publication_years'][1]}"
         st.metric("Статьи для расчета", f"{result['total_articles_if']}", help=f"Статьи за {period_text}")
     
     with col3:
-        period_text = (f"{result['if_citation_period'][0].strftime('%Y-%m')}–"
-                      f"{result['if_citation_period'][1].strftime('%Y-%m')}") if is_dynamic_mode else f"{result['if_citation_period'][0]}"
+        # ✅ ИСПРАВЛЕНИЕ KeyError: Безопасный доступ
+        if is_dynamic_mode and 'if_citation_period' in result:
+            period_text = (f"{result['if_citation_period'][0].strftime('%Y-%m')}–"
+                          f"{result['if_citation_period'][1].strftime('%Y-%m')}")
+        else:
+            period_text = f"{result.get('if_citation_period', [2025])[0]}"
         st.metric("Цитирований", f"{result['total_cites_if']}", help=f"Цитирования за {period_text}")
     
     with col4:
@@ -414,17 +406,22 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
             st.markdown('<div class="warning-box">ℹ️ Умеренный уровень самоцитирований</div>', unsafe_allow_html=True)
     
     with col5:
-        # Среднее время до первого цитирования
-        if_data = pd.DataFrame(result['if_citation_data'])
-        time_data = if_data.dropna(subset=['Время до первого цитирования'])
-        if not time_data.empty:
-            time_data['pub_date'] = pd.to_datetime(time_data['Год публикации'].astype(str) + '-01-01')
-            time_data['cite_date'] = pd.to_datetime(time_data['Время до первого цитирования'])
-            time_data['days_to_cite'] = (time_data['cite_date'] - time_data['pub_date']).dt.days
-            median_days = time_data['days_to_cite'].median()
-            st.metric("⏱️ Медиана до цитаты", f"{median_days:.0f} дней")
+        # Среднее время до первого цитирования (только для точного/динамического)
+        if is_precise_mode or is_dynamic_mode:
+            if_data = pd.DataFrame(result['if_citation_data'])
+            time_data = if_data.dropna(subset=['Время до первого цитирования'])
+            if not time_data.empty:
+                time_data['pub_date'] = pd.to_datetime(time_data['Год публикации'].astype(str) + '-01-01')
+                time_data['cite_date'] = pd.to_datetime(time_data['Время до первого цитирования'])
+                time_data['days_to_cite'] = (time_data['cite_date'] - time_data['pub_date']).dt.days
+                median_days = time_data['days_to_cite'].median()
+                st.metric("⏱️ Медиана до цитаты", f"{median_days:.0f} дней")
+            else:
+                st.metric("⏱️ Медиана до цитаты", "N/A")
+        else:
+            st.metric("⏱️ Медиана до цитаты", "N/A")
     
-    if is_precise_mode and not is_dynamic_mode:
+    if is_precise_mode and not is_dynamic_mode and 'if_forecasts' in result:
         st.markdown("#### Прогнозы Импакт-Фактора на конец 2025")
         forecast_col1, forecast_col2, forecast_col3 = st.columns(3)
         
@@ -453,13 +450,21 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
         st.metric("Текущий CiteScore", f"{result['current_citescore']:.2f}")
     
     with col2:
-        period_text = (f"{result['cs_publication_period'][0].strftime('%Y-%m')}–"
-                      f"{result['cs_publication_period'][1].strftime('%Y-%m')}") if is_dynamic_mode else f"{result['cs_publication_years'][0]}–{result['cs_publication_years'][-1]}"
+        # ✅ ИСПРАВЛЕНИЕ KeyError
+        if is_dynamic_mode and 'cs_publication_period' in result:
+            period_text = (f"{result['cs_publication_period'][0].strftime('%Y-%m')}–"
+                          f"{result['cs_publication_period'][1].strftime('%Y-%m')}")
+        else:
+            period_text = f"{result['cs_publication_years'][0]}–{result['cs_publication_years'][-1]}"
         st.metric("Статьи для расчета", f"{result['total_articles_cs']}", help=f"Статьи за {period_text}")
     
     with col3:
-        period_text = (f"{result['cs_citation_period'][0].strftime('%Y-%m')}–"
-                      f"{result['cs_citation_period'][1].strftime('%Y-%m')}") if is_dynamic_mode else f"{result['cs_publication_years'][0]}–{result['cs_publication_years'][-1]}"
+        # ✅ ИСПРАВЛЕНИЕ KeyError
+        if is_dynamic_mode and 'cs_citation_period' in result:
+            period_text = (f"{result['cs_citation_period'][0].strftime('%Y-%m')}–"
+                          f"{result['cs_citation_period'][1].strftime('%Y-%m')}")
+        else:
+            period_text = f"{result['cs_publication_years'][0]}–{result['cs_publication_years'][-1]}"
         st.metric("Цитирований", f"{result['total_cites_cs']}", help=f"Цитирования за {period_text}")
     
     with col4:
@@ -468,16 +473,21 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
     
     with col5:
         # Среднее время до первого цитирования для CS
-        cs_data = pd.DataFrame(result['cs_citation_data'])
-        time_cs_data = cs_data.dropna(subset=['Время до первого цитирования'])
-        if not time_cs_data.empty:
-            time_cs_data['pub_date'] = pd.to_datetime(time_cs_data['Год публикации'].astype(str) + '-01-01')
-            time_cs_data['cite_date'] = pd.to_datetime(time_cs_data['Время до первого цитирования'])
-            time_cs_data['days_to_cite'] = (time_cs_data['cite_date'] - time_cs_data['pub_date']).dt.days
-            median_days_cs = time_cs_data['days_to_cite'].median()
-            st.metric("⏱️ Медиана до цитаты", f"{median_days_cs:.0f} дней")
+        if is_precise_mode or is_dynamic_mode:
+            cs_data = pd.DataFrame(result['cs_citation_data'])
+            time_cs_data = cs_data.dropna(subset=['Время до первого цитирования'])
+            if not time_cs_data.empty:
+                time_cs_data['pub_date'] = pd.to_datetime(time_cs_data['Год публикации'].astype(str) + '-01-01')
+                time_cs_data['cite_date'] = pd.to_datetime(time_cs_data['Время до первого цитирования'])
+                time_cs_data['days_to_cite'] = (time_cs_data['cite_date'] - time_cs_data['pub_date']).dt.days
+                median_days_cs = time_cs_data['days_to_cite'].median()
+                st.metric("⏱️ Медиана до цитаты", f"{median_days_cs:.0f} дней")
+            else:
+                st.metric("⏱️ Медиана до цитаты", "N/A")
+        else:
+            st.metric("⏱️ Медиана до цитаты", "N/A")
     
-    if is_precise_mode and not is_dynamic_mode:
+    if is_precise_mode and not is_dynamic_mode and 'citescore_forecasts' in result:
         st.markdown("#### Прогнозы CiteScore на конец 2025")
         forecast_col1, forecast_col2, forecast_col3 = st.columns(3)
         
@@ -603,37 +613,38 @@ def display_statistics(result):
             st.bar_chart(df_cs['Цитирования в периоде'])
     
     # Статистика времени до цитирования
-    st.subheader("⏱️ Время до первого цитирования")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**Импакт-Фактор**")
-        if_data = pd.DataFrame(result['if_citation_data'])
-        time_if = if_data.dropna(subset=['Время до первого цитирования'])
+    if is_precise_mode or is_dynamic_mode:
+        st.subheader("⏱️ Время до первого цитирования")
         
-        if not time_if.empty:
-            time_if['pub_date'] = pd.to_datetime(time_if['Год публикации'].astype(str) + '-01-01')
-            time_if['cite_date'] = pd.to_datetime(time_if['Время до первого цитирования'])
-            time_if['days_to_cite'] = (time_if['cite_date'] - time_if['pub_date']).dt.days
-            
-            st.metric("Медиана", f"{time_if['days_to_cite'].median():.0f} дней")
-            st.metric("Среднее", f"{time_if['days_to_cite'].mean():.0f} дней")
-            st.bar_chart(time_if['days_to_cite'])
-    
-    with col2:
-        st.markdown("**CiteScore**")
-        cs_data = pd.DataFrame(result['cs_citation_data'])
-        time_cs = cs_data.dropna(subset=['Время до первого цитирования'])
+        col1, col2 = st.columns(2)
         
-        if not time_cs.empty:
-            time_cs['pub_date'] = pd.to_datetime(time_cs['Год публикации'].astype(str) + '-01-01')
-            time_cs['cite_date'] = pd.to_datetime(time_cs['Время до первого цитирования'])
-            time_cs['days_to_cite'] = (time_cs['cite_date'] - time_cs['pub_date']).dt.days
+        with col1:
+            st.markdown("**Импакт-Фактор**")
+            if_data = pd.DataFrame(result['if_citation_data'])
+            time_if = if_data.dropna(subset=['Время до первого цитирования'])
             
-            st.metric("Медиана", f"{time_cs['days_to_cite'].median():.0f} дней")
-            st.metric("Среднее", f"{time_cs['days_to_cite'].mean():.0f} дней")
-            st.bar_chart(time_cs['days_to_cite'])
+            if not time_if.empty:
+                time_if['pub_date'] = pd.to_datetime(time_if['Год публикации'].astype(str) + '-01-01')
+                time_if['cite_date'] = pd.to_datetime(time_if['Время до первого цитирования'])
+                time_if['days_to_cite'] = (time_if['cite_date'] - time_if['pub_date']).dt.days
+                
+                st.metric("Медиана", f"{time_if['days_to_cite'].median():.0f} дней")
+                st.metric("Среднее", f"{time_if['days_to_cite'].mean():.0f} дней")
+                st.bar_chart(time_if['days_to_cite'])
+        
+        with col2:
+            st.markdown("**CiteScore**")
+            cs_data = pd.DataFrame(result['cs_citation_data'])
+            time_cs = cs_data.dropna(subset=['Время до первого цитирования'])
+            
+            if not time_cs.empty:
+                time_cs['pub_date'] = pd.to_datetime(time_cs['Год публикации'].astype(str) + '-01-01')
+                time_cs['cite_date'] = pd.to_datetime(time_cs['Время до первого цитирования'])
+                time_cs['days_to_cite'] = (time_cs['cite_date'] - time_cs['pub_date']).dt.days
+                
+                st.metric("Медиана", f"{time_cs['days_to_cite'].median():.0f} дней")
+                st.metric("Среднее", f"{time_cs['days_to_cite'].mean():.0f} дней")
+                st.bar_chart(time_cs['days_to_cite'])
 
 def display_parameters(result, is_precise_mode, is_dynamic_mode):
     """Отображение параметров расчета"""
@@ -644,7 +655,7 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
     
     with col1:
         st.markdown("**Периоды расчета:**")
-        if is_dynamic_mode:
+        if is_dynamic_mode and 'if_publication_period' in result:
             st.write(f"**ИФ (статьи):** {result['if_publication_period'][0].strftime('%Y-%m-%d')} – {result['if_publication_period'][1].strftime('%Y-%m-%d')}")
             st.write(f"**ИФ (цитирования):** {result['if_citation_period'][0].strftime('%Y-%m-%d')} – {result['if_citation_period'][1].strftime('%Y-%m-%d')}")
             st.write(f"**CS (статьи/цитирования):** {result['cs_publication_period'][0].strftime('%Y-%m-%d')} – {result['cs_publication_period'][1].strftime('%Y-%m-%d')}")
@@ -660,7 +671,7 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
         st.markdown("**Дата анализа:**")
         st.write(result['analysis_date'].strftime('%d.%m.%Y %H:%M'))
         
-        if is_precise_mode and not is_dynamic_mode:
+        if is_precise_mode and not is_dynamic_mode and 'multipliers' in result:
             st.markdown("**Коэффициенты прогноза:**")
             for scenario in ['conservative', 'balanced', 'optimistic']:
                 st.write(f"**{scenario.title()}:** {result['multipliers'][scenario]:.2f}x")
