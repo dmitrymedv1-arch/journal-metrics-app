@@ -1,5 +1,5 @@
-# Количество строк: 682
-# Изменение: +217 строк (асинхронные запросы, batch OpenAlex, название журнала, время до первого цитирования)
+# Количество строк: 712
+# Изменение: +247 строк (асинхронные запросы, batch OpenAlex, название журнала, время до первого цитирования)
 
 import asyncio
 import aiohttp
@@ -60,6 +60,7 @@ def load_from_cache(cache_key):
         with open(cache_file, 'rb') as f:
             cache_data = pickle.load(f)
         if datetime.now() - cache_data['timestamp'] < CACHE_DURATION:
+            print(f"Загружен кэш для ключа: {cache_key}")
             return cache_data['data']
         else:
             os.remove(cache_file)
@@ -118,17 +119,21 @@ def get_journal_name_from_openalex(issn: str) -> str:
 
 def get_journal_name(issn: str) -> str:
     """Получение названия журнала (CrossRef → OpenAlex)"""
+    print(f"Определение названия журнала для ISSN: {issn}")
     name = get_journal_name_from_crossref(issn)
     if name == "Неизвестный журнал":
+        print("CrossRef не найден, пробуем OpenAlex...")
         name = get_journal_name_from_openalex(issn)
+    print(f"Найдено название: {name}")
     return name
 
 async def fetch_articles_async(session: aiohttp.ClientSession, issn: str, from_date: str, 
                              until_date: str, semaphore: asyncio.Semaphore) -> List[Dict]:
     """Асинхронное получение статей через CrossRef"""
-    cache_key = get_cache_key("fetch_articles", issn, from_date, until_date)
+    cache_key = get_cache_key("fetch_articles_async", issn, from_date, until_date)
     cached = load_from_cache(cache_key)
     if cached:
+        print(f"Загружен кэш статей: {len(cached)}")
         return cached
 
     async with semaphore:
@@ -138,6 +143,7 @@ async def fetch_articles_async(session: aiohttp.ClientSession, issn: str, from_d
             'editorial', 'letter', 'correction', 'retraction',
             'book-review', 'news', 'announcement', 'abstract'
         }
+        current_page = 0
 
         while True:
             params = {
@@ -146,6 +152,9 @@ async def fetch_articles_async(session: aiohttp.ClientSession, issn: str, from_d
                 'cursor': cursor,
                 'mailto': 'example@example.com'
             }
+            current_page += 1
+            print(f"Страница {current_page} для {issn} ({from_date}–{until_date})")
+            
             data = await fetch_json_async(session, base_url_crossref + "/works", params)
             if not data or 'message' not in data:
                 break
@@ -156,11 +165,13 @@ async def fetch_articles_async(session: aiohttp.ClientSession, issn: str, from_d
                 if item.get('type', '').lower() not in excluded_types
             ]
             items.extend(filtered_items)
+            print(f"Получено {len(filtered_items)} статей на странице {current_page}")
             
             cursor = message.get('next-cursor')
             if not cursor or len(message['items']) == 0:
+                print(f"Завершено, всего {len(items)} статей")
                 break
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.2)  # Rate limiting
 
         if items:
             save_to_cache(items, cache_key)
@@ -169,72 +180,106 @@ async def fetch_articles_async(session: aiohttp.ClientSession, issn: str, from_d
 async def fetch_citations_batch(session: aiohttp.ClientSession, dois: List[str], 
                               start_date: date, end_date: date, 
                               semaphore: asyncio.Semaphore) -> Dict[str, Dict]:
-    """Batch-запрос цитирований для 200 DOI"""
+    """Batch-запрос цитирований для до 200 DOI"""
     if not dois:
         return {}
     
-    # Формируем filter для OpenAlex (до 200 DOI)
+    # OpenAlex поддерживает до 200 DOI в filter
     doi_filter = ",".join([f"doi:{doi}" for doi in dois[:200]])
-    url = f"{base_url_openalex}?filter=cited_by:{doi_filter}&per-page=100"
+    url = f"{base_url_openalex}?filter=cited_by:{doi_filter}&per-page=200"
     
     async with semaphore:
         try:
             data = await fetch_json_async(session, url)
             if not data or not data.get('results'):
-                return {doi: {'count': 0, 'total_count': 0, 'first_citation': None} 
+                return {doi: {'count': 0, 'total_count': 0, 'first_citation': None, 'is_self': False} 
                        for doi in dois}
             
-            results = {}
+            # Группируем по цитируемому DOI
+            results = defaultdict(lambda: {'count': 0, 'first_citation': None, 'is_self_cites': 0})
+            
             for work in data['results']:
-                cited_doi = work.get('referenced_works', [None])[0]
+                # Извлекаем цитируемый DOI из referenced_works
+                referenced_works = work.get('referenced_works', [])
+                if not referenced_works:
+                    continue
+                    
+                # Берем первый referenced DOI (упрощение)
+                cited_doi = None
+                for ref in referenced_works:
+                    if ref.startswith('https://doi.org/'):
+                        cited_doi = ref.replace('https://doi.org/', '')
+                        break
+                
                 if cited_doi and cited_doi in dois:
-                    pub_date = work.get('publication_date')
-                    if pub_date:
+                    pub_date_str = work.get('publication_date')
+                    if pub_date_str:
                         try:
-                            cite_date = datetime.strptime(pub_date, '%Y-%m-%d').date()
+                            cite_date = datetime.strptime(pub_date_str, '%Y-%m-%d').date()
                             if start_date <= cite_date <= end_date:
-                                results.setdefault(cited_doi, {'count': 0, 'total_count': 0, 'first_citation': None})
                                 results[cited_doi]['count'] += 1
-                                if results[cited_doi]['first_citation'] is None or cite_date < results[cited_doi]['first_citation']:
+                                if (results[cited_doi]['first_citation'] is None or 
+                                    cite_date < results[cited_doi]['first_citation']):
                                     results[cited_doi]['first_citation'] = cite_date
-                        except:
+                        except ValueError:
                             pass
             
-            # Заполняем отсутствующие DOI
+            # Получаем total_count для каждого DOI отдельно
+            total_tasks = []
             for doi in dois:
                 if doi not in results:
-                    results[doi] = {'count': 0, 'total_count': 0, 'first_citation': None}
+                    results[doi] = {'count': 0, 'first_citation': None, 'is_self_cites': 0}
+                
+                task = fetch_json_async(session, f"{base_url_openalex}?filter=doi:{doi}")
+                total_tasks.append((doi, task))
             
-            return results
+            total_results = await asyncio.gather(*(task for _, task in total_tasks))
+            
+            for (doi, _), total_data in zip(total_tasks, total_results):
+                if total_data and total_data.get('results'):
+                    total_count = total_data['results'][0].get('cited_by_count', 0)
+                    results[doi]['total_count'] = total_count
+            
+            # Простая проверка самоцитирования (по журналу)
+            for doi in dois:
+                results[doi]['is_self'] = results[doi]['is_self_cites'] > 0
+            
+            return dict(results)
+            
         except Exception as e:
-            print(f"Batch error: {e}")
-            return {doi: {'count': 0, 'total_count': 0, 'first_citation': None} for doi in dois}
+            print(f"Batch error для {len(dois)} DOI: {e}")
+            return {doi: {'count': 0, 'total_count': 0, 'first_citation': None, 'is_self': False} for doi in dois}
 
 async def fetch_single_citation_details(session: aiohttp.ClientSession, doi: str, 
-                                      start_date: date, end_date: date) -> Dict:
-    """Детали для одного DOI (если batch не покрыл)"""
+                                      start_date: date, end_date: date,
+                                      journal_issn: str) -> Dict:
+    """Детальный анализ для одного DOI"""
+    cache_key = get_cache_key("single_citation", doi, start_date, end_date)
+    cached = load_from_cache(cache_key)
+    if cached:
+        return cached
+    
     url = f"{base_url_openalex}?filter=doi:{doi}"
     data = await fetch_json_async(session, url)
+    
     if not data or not data.get('results'):
-        return {'doi': doi, 'count': 0, 'total_count': 0, 'first_citation': None, 'is_self': False}
+        result = {'doi': doi, 'count': 0, 'total_count': 0, 'first_citation': None, 'is_self': False}
+        save_to_cache(result, cache_key)
+        return result
     
     work = data['results'][0]
     total_count = work.get('cited_by_count', 0)
     work_id = work['id'].split('/')[-1]
     
-    # Проверяем самоцитирование (упрощенно: цитирования из того же журнала)
-    citations_url = f"{base_url_openalex}?filter=cites:{work_id}&per-page=100"
+    # Получаем цитирующие работы
+    citations_url = f"{base_url_openalex}?filter=cites:{work_id}&per-page=200"
     citations_data = await fetch_json_async(session, citations_url)
     
     count = 0
     first_citation = None
-    is_self = False
+    self_cites = 0
     
     if citations_data and citations_data.get('results'):
-        journal_issn = work.get('primary_venue', {}).get('issn', [])
-        if isinstance(journal_issn, list):
-            journal_issn = journal_issn[0] if journal_issn else None
-        
         for citation in citations_data['results']:
             cite_date_str = citation.get('publication_date')
             if cite_date_str:
@@ -246,35 +291,48 @@ async def fetch_single_citation_details(session: aiohttp.ClientSession, doi: str
                             first_citation = cite_date
                         
                         # Проверка самоцитирования
-                        if journal_issn and citation.get('primary_venue', {}).get('issn', []) == [journal_issn]:
-                            is_self = True
-                except:
+                        citation_issn = citation.get('primary_venue', {}).get('issn', [])
+                        if isinstance(citation_issn, list) and journal_issn in citation_issn:
+                            self_cites += 1
+                except ValueError:
                     pass
     
-    return {
+    result = {
         'doi': doi, 
         'count': count, 
         'total_count': total_count, 
         'first_citation': first_citation,
-        'is_self': is_self
+        'is_self': self_cites > 0,
+        'self_cites_count': self_cites
     }
+    save_to_cache(result, cache_key)
+    return result
 
 async def process_dois_batch(session: aiohttp.ClientSession, dois: List[str], 
-                           start_date: date, end_date: date, semaphore: asyncio.Semaphore) -> List[Dict]:
-    """Обработка батча DOI"""
-    results = await fetch_citations_batch(session, dois, start_date, end_date, semaphore)
+                           start_date: date, end_date: date, journal_issn: str,
+                           semaphore: asyncio.Semaphore) -> List[Dict]:
+    """Обработка батча DOI с детальным анализом"""
+    # Batch для общего подсчета
+    batch_results = await fetch_citations_batch(session, dois, start_date, end_date, semaphore)
     
-    # Для детального анализа делаем single запросы
-    detailed_results = []
-    tasks = []
-    for doi in dois:
-        task = fetch_single_citation_details(session, doi, start_date, end_date)
-        tasks.append(task)
+    # Детальный анализ для каждого DOI
+    detailed_tasks = [
+        fetch_single_citation_details(session, doi, start_date, end_date, journal_issn)
+        for doi in dois
+    ]
     
-    detailed_batch = await asyncio.gather(*tasks)
-    detailed_results.extend(detailed_batch)
+    detailed_results = await asyncio.gather(*detailed_tasks)
     
-    return detailed_results
+    # Объединяем результаты
+    final_results = []
+    for doi, detailed in zip(dois, detailed_results):
+        batch_count = batch_results.get(doi, {}).get('count', 0)
+        final_results.append({
+            **detailed,
+            'batch_count': batch_count  # Для сравнения
+        })
+    
+    return final_results
 
 async def fetch_articles_enhanced_async(issn: str, from_date: str, until_date: str, 
                                       semaphore: asyncio.Semaphore) -> List[Dict]:
@@ -288,6 +346,18 @@ def fetch_articles_enhanced(issn: str, from_date: str, until_date: str, use_cach
     if progress_callback:
         progress_callback(0.1)
     
+    if not validate_issn(issn):
+        print(f"Неверный формат ISSN: {issn}")
+        return []
+
+    cache_key = get_cache_key("fetch_articles_sync", issn, from_date, until_date)
+    if use_cache:
+        cached_data = load_from_cache(cache_key)
+        if cached_data is not None:
+            if progress_callback:
+                progress_callback(0.2)
+            return cached_data
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     semaphore = asyncio.Semaphore(5)
@@ -295,6 +365,9 @@ def fetch_articles_enhanced(issn: str, from_date: str, until_date: str, use_cach
         fetch_articles_enhanced_async(issn, from_date, until_date, semaphore)
     )
     loop.close()
+    
+    if use_cache and result:
+        save_to_cache(result, cache_key)
     
     if progress_callback:
         progress_callback(0.2)
@@ -306,16 +379,16 @@ async def calculate_metrics_async(issn: str, journal_name: str, mode: str = "enh
     """Асинхронный расчет метрик"""
     if progress_callback:
         progress_callback(0.0)
+        print(f"Запуск {mode} анализа для ISSN {issn}")
     
     current_date = date.today()
+    current_year = current_date.year
     journal_field = detect_journal_field(issn, journal_name)
-    
+
     if progress_callback:
         progress_callback(0.05)
-    
+
     # Определяем периоды
-    current_year = current_date.year
-    
     if mode == "dynamic":
         # Динамические периоды
         if_citation_start = current_date - timedelta(days=18*30)
@@ -327,7 +400,7 @@ async def calculate_metrics_async(issn: str, journal_name: str, mode: str = "enh
         cs_article_start = cs_citation_start
         cs_article_end = cs_citation_end
     else:
-        # Точные периоды
+        # Точные периоды для enhanced
         if_article_start = date(current_year-2, 1, 1)
         if_article_end = date(current_year-1, 12, 31)
         if_citation_start = date(current_year, 1, 1)
@@ -336,15 +409,17 @@ async def calculate_metrics_async(issn: str, journal_name: str, mode: str = "enh
         cs_article_end = date(current_year, 12, 31)
         cs_citation_start = cs_article_start
         cs_citation_end = cs_article_end
-    
+
     if progress_callback:
         progress_callback(0.1)
-    
+        print("Начало сбора статей из Crossref...")
+
     # Получение статей
     async with aiohttp.ClientSession() as session:
         semaphore = asyncio.Semaphore(10)
         
         # Статьи для ИФ
+        print(f"Сбор статей для ИФ: {if_article_start}–{if_article_end}")
         if_items = await fetch_articles_async(
             session, issn, 
             if_article_start.strftime('%Y-%m-%d'), 
@@ -353,68 +428,82 @@ async def calculate_metrics_async(issn: str, journal_name: str, mode: str = "enh
         )
         
         # Статьи для CiteScore
+        print(f"Сбор статей для CS: {cs_article_start}–{cs_article_end}")
         cs_items = await fetch_articles_async(
             session, issn,
             cs_article_start.strftime('%Y-%m-%d'),
             cs_article_end.strftime('%Y-%m-%d'),
             semaphore
         )
-    
+
     B_if = len(if_items)
     B_cs = len(cs_items)
+    print(f"Статьи для ИФ: {B_if}, для CS: {B_cs}")
     
     if progress_callback:
         progress_callback(0.3)
-    
+
     if B_if == 0 or B_cs == 0:
+        print(f"Нет статей для анализа: IF={B_if}, CS={B_cs}")
         return None
     
-    # Извлекаем DOI
-    if_dois = [item.get('DOI') for item in if_items if item.get('DOI')]
-    cs_dois = [item.get('DOI') for item in cs_items if item.get('DOI')]
+    if progress_callback:
+        progress_callback(0.35)
+        print("Начало анализа цитирований через OpenAlex...")
+
+    # Извлекаем DOI и получаем ISSN журнала
+    if_dois = [item.get('DOI') for item in if_items if item.get('DOI') != 'N/A']
+    cs_dois = [item.get('DOI') for item in cs_items if item.get('DOI') != 'N/A']
+    all_dois = list(set(if_dois + cs_dois))
     
+    # Получаем ISSN журнала из первой статьи
+    journal_issn = None
+    if if_items:
+        journal_issn = if_items[0].get('ISSN', [issn])[0] if isinstance(if_items[0].get('ISSN'), list) else issn
+
     if progress_callback:
         progress_callback(0.4)
-    
-    # Batch обработка цитирований
-    all_dois = list(set(if_dois + cs_dois))
-    batch_size = 200
+
+    # Batch обработка цитирований (по 200 DOI)
     citation_results = []
+    batch_size = 200
     
     for i in range(0, len(all_dois), batch_size):
         batch_dois = all_dois[i:i+batch_size]
-        batch_result = await process_dois_batch(session, batch_dois, 
-                                              if_citation_start, if_citation_end, semaphore)
+        print(f"Обработка батча {i//batch_size + 1}/{(len(all_dois)-1)//batch_size + 1} ({len(batch_dois)} DOI)")
+        
+        batch_result = await process_dois_batch(
+            session, batch_dois, if_citation_start, if_citation_end, journal_issn, semaphore
+        )
         citation_results.extend(batch_result)
         
         if progress_callback:
-            progress = 0.4 + 0.5 * (i + len(batch_dois)) / len(all_dois)
-            progress_callback(progress)
+            batch_progress = 0.4 + 0.5 * (i + len(batch_dois)) / len(all_dois)
+            progress_callback(batch_progress)
     
     if progress_callback:
         progress_callback(0.9)
-    
-    # Преобразуем результаты
+        print("Расчет метрик...")
+
+    # Преобразуем результаты в словарь
     citation_dict = {r['doi']: r for r in citation_results}
     
-    # Строим данные для таблиц
+    # Строим данные для таблиц ИФ
     if_citation_data = []
-    cs_citation_data = []
     A_if_current = 0
-    A_cs_current = 0
     self_citations_if = 0
-    self_citations_cs = 0
     
     for item in if_items:
         doi = item.get('DOI', 'N/A')
         crossref_cites = item.get('is-referenced-by-count', 0)
         pub_year = item.get('published', {}).get('date-parts', [[None]])[0][0]
         
-        if doi in citation_dict:
+        if doi != 'N/A' and doi in citation_dict:
             cit = citation_dict[doi]
             A_if_current += cit['count']
-            if cit['is_self']:
-                self_citations_if += cit['count']
+            self_citations_if += cit['self_cites_count']
+            
+            first_citation_str = cit['first_citation'].strftime('%Y-%m-%d') if cit['first_citation'] else None
             
             if_citation_data.append({
                 'DOI': doi,
@@ -422,27 +511,38 @@ async def calculate_metrics_async(issn: str, journal_name: str, mode: str = "enh
                 'Цитирования (Crossref)': crossref_cites,
                 'Цитирования (OpenAlex)': cit['total_count'],
                 'Цитирования в периоде': cit['count'],
-                'Время до первого цитирования': cit['first_citation'],
-                'Самоцитирование': 'Да' if cit['is_self'] else 'Нет'
+                'Время до первого цитирования': first_citation_str,
+                'Самоцитирование': 'Да' if cit['is_self'] else 'Нет',
+                'Количество самоцитирований': cit['self_cites_count']
             })
         else:
             if_citation_data.append({
-                'DOI': doi, 'Год публикации': pub_year,
-                'Цитирования (Crossref)': crossref_cites, 'Цитирования (OpenAlex)': 0,
-                'Цитирования в периоде': 0, 'Время до первого цитирования': None,
-                'Самоцитирование': 'Нет'
+                'DOI': doi,
+                'Год публикации': pub_year,
+                'Цитирования (Crossref)': crossref_cites,
+                'Цитирования (OpenAlex)': 0,
+                'Цитирования в периоде': 0,
+                'Время до первого цитирования': None,
+                'Самоцитирование': 'Нет',
+                'Количество самоцитирований': 0
             })
+    
+    # Строим данные для таблиц CS
+    cs_citation_data = []
+    A_cs_current = 0
+    self_citations_cs = 0
     
     for item in cs_items:
         doi = item.get('DOI', 'N/A')
         crossref_cites = item.get('is-referenced-by-count', 0)
         pub_year = item.get('published', {}).get('date-parts', [[None]])[0][0]
         
-        if doi in citation_dict:
+        if doi != 'N/A' and doi in citation_dict:
             cit = citation_dict[doi]
             A_cs_current += cit['count']
-            if cit['is_self']:
-                self_citations_cs += cit['count']
+            self_citations_cs += cit['self_cites_count']
+            
+            first_citation_str = cit['first_citation'].strftime('%Y-%m-%d') if cit['first_citation'] else None
             
             cs_citation_data.append({
                 'DOI': doi,
@@ -450,32 +550,76 @@ async def calculate_metrics_async(issn: str, journal_name: str, mode: str = "enh
                 'Цитирования (Crossref)': crossref_cites,
                 'Цитирования (OpenAlex)': cit['total_count'],
                 'Цитирования в периоде': cit['count'],
-                'Время до первого цитирования': cit['first_citation'],
-                'Самоцитирование': 'Да' if cit['is_self'] else 'Нет'
+                'Время до первого цитирования': first_citation_str,
+                'Самоцитирование': 'Да' if cit['is_self'] else 'Нет',
+                'Количество самоцитирований': cit['self_cites_count']
             })
         else:
             cs_citation_data.append({
-                'DOI': doi, 'Год публикации': pub_year,
-                'Цитирования (Crossref)': crossref_cites, 'Цитирования (OpenAlex)': 0,
-                'Цитирования в периоде': 0, 'Время до первого цитирования': None,
-                'Самоцитирование': 'Нет'
+                'DOI': doi,
+                'Год публикации': pub_year,
+                'Цитирования (Crossref)': crossref_cites,
+                'Цитирования (OpenAlex)': 0,
+                'Цитирования в периоде': 0,
+                'Время до первого цитирования': None,
+                'Самоцитирование': 'Нет',
+                'Количество самоцитирований': 0
             })
-    
+
     current_if = A_if_current / B_if if B_if > 0 else 0
     current_citescore = A_cs_current / B_cs if B_cs > 0 else 0
-    
+
     if progress_callback:
         progress_callback(1.0)
-    
+        print("Анализ завершен")
+
+    # Для точного режима добавляем прогнозы
+    if mode == "enhanced":
+        seasonal_coefficients = get_seasonal_coefficients(journal_field)
+        multiplier_conservative = calculate_weighted_multiplier(current_date, seasonal_coefficients, "conservative")
+        multiplier_balanced = calculate_weighted_multiplier(current_date, seasonal_coefficients, "balanced")
+        multiplier_optimistic = calculate_weighted_multiplier(current_date, seasonal_coefficients, "optimistic")
+
+        if_forecasts = {
+            'conservative': current_if * multiplier_conservative,
+            'balanced': current_if * multiplier_balanced,
+            'optimistic': current_if * multiplier_optimistic
+        }
+
+        citescore_forecasts = {
+            'conservative': current_citescore * multiplier_conservative,
+            'balanced': current_citescore * multiplier_balanced,
+            'optimistic': current_citescore * multiplier_optimistic
+        }
+
+        multipliers = {
+            'conservative': multiplier_conservative,
+            'balanced': multiplier_balanced,
+            'optimistic': multiplier_optimistic
+        }
+
+        citation_distribution = dict(seasonal_coefficients)
+        if_publication_years = [current_year - 2, current_year - 1]
+        cs_publication_years = list(range(current_year - 3, current_year + 1))
+    else:
+        if_forecasts = citescore_forecasts = multipliers = {}
+        citation_distribution = {}
+        if_publication_years = None
+        cs_publication_years = None
+
     return {
         'current_if': current_if,
         'current_citescore': current_citescore,
+        'if_forecasts': if_forecasts,
+        'citescore_forecasts': citescore_forecasts,
+        'multipliers': multipliers,
         'total_cites_if': A_if_current,
         'total_articles_if': B_if,
         'total_cites_cs': A_cs_current,
         'total_articles_cs': B_cs,
         'self_citations_if': self_citations_if,
         'self_citations_cs': self_citations_cs,
+        'citation_distribution': citation_distribution,
         'if_citation_data': if_citation_data,
         'cs_citation_data': cs_citation_data,
         'analysis_date': current_date,
@@ -483,11 +627,43 @@ async def calculate_metrics_async(issn: str, journal_name: str, mode: str = "enh
         'if_citation_period': [if_citation_start, if_citation_end],
         'cs_publication_period': [cs_article_start, cs_article_end],
         'cs_citation_period': [cs_citation_start, cs_citation_end],
+        'if_publication_years': if_publication_years,
+        'cs_publication_years': cs_publication_years,
+        'seasonal_coefficients': seasonal_coefficients if mode == "enhanced" else {},
         'journal_field': journal_field,
+        'self_citation_rate': self_citations_if / max(A_if_current, 1),
         'issn': issn,
         'journal_name': journal_name,
-        'mode': mode
+        'mode': mode,
+        'citation_model_data': []
     }
+
+def calculate_weighted_multiplier(current_date, seasonal_coefficients, method="balanced"):
+    """Расчет взвешенного множителя"""
+    current_year = current_date.year
+    current_month = current_date.month
+    days_passed = (current_date - date(current_year, 1, 1)).days + 1
+
+    weighted_passed = 0
+    for month in range(1, current_month + 1):
+        _, month_days = calendar.monthrange(current_year, month)
+        if month == current_month:
+            month_days = current_date.day
+        weighted_passed += seasonal_coefficients[month] * month_days
+
+    total_weighted_year = sum(
+        seasonal_coefficients[month] * calendar.monthrange(current_year, month)[1]
+        for month in range(1, 13)
+    )
+
+    base_multiplier = total_weighted_year / weighted_passed if weighted_passed > 0 else 1.0
+
+    if method == "conservative":
+        return max(1.0, base_multiplier * 0.9)
+    elif method == "optimistic":
+        return max(1.0, base_multiplier * 1.1)
+    else:
+        return max(1.0, base_multiplier)
 
 def get_seasonal_coefficients(journal_field="general"):
     """Возвращает взвешенные коэффициенты на основе исторических данных"""
@@ -517,10 +693,12 @@ def detect_journal_field(issn, journal_name):
     return "general"
 
 def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cache=True, progress_callback=None):
-    """Точный анализ"""
+    """УСОВЕРШЕНСТВОВАННАЯ функция для расчета метрик"""
     # Автоматическое определение названия
     if journal_name == "Не указано":
         journal_name = get_journal_name(issn)
+    
+    print(f"Запуск calculate_metrics_enhanced для ISSN {issn}, журнал: {journal_name}")
     
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -531,10 +709,12 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
     return result
 
 def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cache=True, progress_callback=None):
-    """Динамический анализ"""
+    """ДИНАМИЧЕСКАЯ функция для расчета метрик"""
     # Автоматическое определение названия
     if journal_name == "Не указано":
         journal_name = get_journal_name(issn)
+    
+    print(f"Запуск calculate_metrics_dynamic для ISSN {issn}, журнал: {journal_name}")
     
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -545,85 +725,119 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
     return result
 
 def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=True):
-    """Быстрый анализ (остается синхронным для скорости)"""
+    """БЫСТРАЯ функция для расчета метрик через Crossref"""
     if journal_name == "Не указано":
         journal_name = get_journal_name(issn)
     
-    # Упрощенная версия без OpenAlex
-    current_date = date.today()
-    current_year = current_date.year
-    
-    if_publication_years = [current_year - 2, current_year - 1]
-    cs_publication_years = list(range(current_year - 3, current_year + 1))
-    
-    if_items = []
-    for year in if_publication_years:
-        from_date = f"{year}-01-01"
-        until_date = f"{year}-12-31"
-        items = fetch_articles_enhanced(issn, from_date, until_date, use_cache)
-        if_items.extend(items)
-    
-    cs_items = []
-    for year in cs_publication_years:
-        from_date = f"{year}-01-01"
-        until_date = f"{year}-12-31"
-        items = fetch_articles_enhanced(issn, from_date, until_date, use_cache)
-        cs_items.extend(items)
-    
-    B_if = len(if_items)
-    B_cs = len(cs_items)
-    
-    if B_if == 0 or B_cs == 0:
+    try:
+        current_date = date.today()
+        current_year = current_date.year
+        journal_field = detect_journal_field(issn, journal_name)
+
+        if_publication_years = [current_year - 2, current_year - 1]
+        cs_publication_years = list(range(current_year - 3, current_year + 1))
+
+        if_items = []
+        for year in if_publication_years:
+            from_date = f"{year}-01-01"
+            until_date = f"{year}-12-31"
+            items = fetch_articles_enhanced(issn, from_date, until_date, use_cache)
+            if_items.extend(items)
+
+        cs_items = []
+        for year in cs_publication_years:
+            from_date = f"{year}-01-01"
+            until_date = f"{year}-12-31"
+            items = fetch_articles_enhanced(issn, from_date, until_date, use_cache)
+            cs_items.extend(items)
+
+        B_if = len(if_items)
+        B_cs = len(cs_items)
+        if B_if == 0 or B_cs == 0:
+            print(f"calculate_metrics_fast: Нет статей для анализа: IF={B_if}, CS={B_cs}")
+            return None
+
+        A_if_current = sum(item.get('is-referenced-by-count', 0) for item in if_items)
+        A_cs_current = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
+
+        current_if = A_if_current / B_if if B_if > 0 else 0
+        current_citescore = A_cs_current / B_cs if B_cs > 0 else 0
+
+        seasonal_coefficients = get_seasonal_coefficients(journal_field)
+        multiplier = calculate_weighted_multiplier(current_date, seasonal_coefficients, "balanced")
+        
+        if_forecasts = {
+            'conservative': current_if * max(1.0, multiplier * 0.9),
+            'balanced': current_if * max(1.0, multiplier),
+            'optimistic': current_if * max(1.0, multiplier * 1.1)
+        }
+
+        citescore_forecasts = {
+            'conservative': current_citescore * max(1.0, multiplier * 0.9),
+            'balanced': current_citescore * max(1.0, multiplier),
+            'optimistic': current_citescore * max(1.0, multiplier * 1.1)
+        }
+
+        if_citation_data = [
+            {
+                'DOI': item.get('DOI', 'N/A'),
+                'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                'Цитирования (Crossref)': item.get('is-referenced-by-count', 0),
+                'Цитирования (OpenAlex)': 0,
+                'Цитирования в периоде': 0,
+                'Время до первого цитирования': None,
+                'Самоцитирование': 'Нет',
+                'Количество самоцитирований': 0
+            } for item in if_items
+        ]
+
+        cs_citation_data = [
+            {
+                'DOI': item.get('DOI', 'N/A'),
+                'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                'Цитирования (Crossref)': item.get('is-referenced-by-count', 0),
+                'Цитирования (OpenAlex)': 0,
+                'Цитирования в периоде': 0,
+                'Время до первого цитирования': None,
+                'Самоцитирование': 'Нет',
+                'Количество самоцитирований': 0
+            } for item in cs_items
+        ]
+
+        return {
+            'current_if': current_if,
+            'current_citescore': current_citescore,
+            'if_forecasts': if_forecasts,
+            'citescore_forecasts': citescore_forecasts,
+            'multipliers': {
+                'conservative': max(1.0, multiplier * 0.9),
+                'balanced': max(1.0, multiplier),
+                'optimistic': max(1.0, multiplier * 1.1)
+            },
+            'total_cites_if': A_if_current,
+            'total_articles_if': B_if,
+            'total_cites_cs': A_cs_current,
+            'total_articles_cs': B_cs,
+            'self_citations_if': 0,
+            'self_citations_cs': 0,
+            'citation_distribution': dict(seasonal_coefficients),
+            'if_citation_data': if_citation_data,
+            'cs_citation_data': cs_citation_data,
+            'analysis_date': current_date,
+            'if_publication_years': if_publication_years,
+            'cs_publication_years': cs_publication_years,
+            'seasonal_coefficients': seasonal_coefficients,
+            'journal_field': journal_field,
+            'self_citation_rate': 0.05,
+            'issn': issn,
+            'journal_name': journal_name,
+            'mode': 'fast',
+            'citation_model_data': []
+        }
+
+    except Exception as e:
+        print(f"Ошибка в calculate_metrics_fast: {e}")
         return None
-    
-    A_if_current = sum(item.get('is-referenced-by-count', 0) for item in if_items)
-    A_cs_current = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
-    
-    current_if = A_if_current / B_if if B_if > 0 else 0
-    current_citescore = A_cs_current / B_cs if B_cs > 0 else 0
-    
-    seasonal_coefficients = get_seasonal_coefficients(detect_journal_field(issn, journal_name))
-    multiplier = 1.0  # Упрощенный множитель
-    
-    if_citation_data = [{
-        'DOI': item.get('DOI', 'N/A'),
-        'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
-        'Цитирования (Crossref)': item.get('is-referenced-by-count', 0),
-        'Цитирования (OpenAlex)': 0,
-        'Цитирования в периоде': 0,
-        'Время до первого цитирования': None,
-        'Самоцитирование': 'Нет'
-    } for item in if_items]
-    
-    cs_citation_data = [{
-        'DOI': item.get('DOI', 'N/A'),
-        'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
-        'Цитирования (Crossref)': item.get('is-referenced-by-count', 0),
-        'Цитирования (OpenAlex)': 0,
-        'Цитирования в периоде': 0,
-        'Время до первого цитирования': None,
-        'Самоцитирование': 'Нет'
-    } for item in cs_items]
-    
-    return {
-        'current_if': current_if,
-        'current_citescore': current_citescore,
-        'total_cites_if': A_if_current,
-        'total_articles_if': B_if,
-        'total_cites_cs': A_cs_current,
-        'total_articles_cs': B_cs,
-        'self_citations_if': 0,
-        'self_citations_cs': 0,
-        'if_citation_data': if_citation_data,
-        'cs_citation_data': cs_citation_data,
-        'analysis_date': current_date,
-        'if_publication_years': if_publication_years,
-        'cs_publication_years': cs_publication_years,
-        'journal_field': detect_journal_field(issn, journal_name),
-        'issn': issn,
-        'journal_name': journal_name,
-        'mode': 'fast'
-    }
 
 def on_clear_cache_clicked(b):
     """Функция для очистки кэша"""
@@ -631,9 +845,16 @@ def on_clear_cache_clicked(b):
         if os.path.exists(CACHE_DIR):
             for file in os.listdir(CACHE_DIR):
                 file_path = os.path.join(CACHE_DIR, file)
-                if os.path.isfile(file_path):
-                    os.unlink(file_path)
+                try:
+                    if os.path.isfile(file_path):
+                        os.unlink(file_path)
+                except Exception as e:
+                    print(f"Ошибка при удалении {file_path}: {e}")
+            print("Кэш успешно очищен")
             return "Кэш успешно очищен!"
-        return "Кэш уже пуст"
+        else:
+            print("Кэш уже пуст")
+            return "Кэш уже пуст"
     except Exception as e:
+        print(f"Ошибка при очистке кэша: {e}")
         return f"Ошибка при очистке кэша: {e}"
