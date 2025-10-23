@@ -376,7 +376,9 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
             {
                 'DOI': item.get('DOI', 'N/A'),
                 'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
-                'Цитирования (Crossref)': item.get('is-referenced-by-count', 0)
+                'Цитирования (Crossref)': item.get('is-referenced-by-count', 0),
+                'Цитирования (OpenAlex)': 0,
+                'Цитирования в 2025 году': 0
             } for item in if_items
         ]
 
@@ -384,7 +386,9 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
             {
                 'DOI': item.get('DOI', 'N/A'),
                 'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
-                'Цитирования (Crossref)': item.get('is-referenced-by-count', 0)
+                'Цитирования (Crossref)': item.get('is-referenced-by-count', 0),
+                'Цитирования (OpenAlex)': 0,
+                'Цитирования в 2025 году': 0
             } for item in cs_items
         ]
 
@@ -438,16 +442,13 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
         current_year = current_date.year
         journal_field = detect_journal_field(issn, journal_name)
 
-        if_publication_years = [current_year - 2, current_year - 1]
-        cs_publication_years = list(range(current_year - 3, current_year + 1))
-
         if progress_callback:
             progress_callback(0.0)
             print("Начало сбора статей из Crossref...")
 
         all_articles = {}
         if_items = []
-        for year in if_publication_years:
+        for year in [current_year - 2, current_year - 1]:
             from_date = f"{year}-01-01"
             until_date = f"{year}-12-31"
             items = fetch_articles_enhanced(issn, from_date, until_date, use_cache, progress_callback)
@@ -455,7 +456,7 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
             all_articles[year] = items
 
         cs_items = []
-        for year in cs_publication_years:
+        for year in range(current_year - 3, current_year + 1):
             if year not in all_articles:
                 from_date = f"{year}-01-01"
                 until_date = f"{year}-12-31"
