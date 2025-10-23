@@ -1,7 +1,5 @@
-# Количество строк: 518
-# Изменение: +8 строк относительно версии с 510 строками
-# +5 строк: Отображение точного названия журнала из fetch_journal_name
-# +3 строки: Улучшение прогресс-бара (текстовое описание этапов)
+# Количество строк: 510
+# Изменение: 0 строк (обновлено описание CiteScore в динамическом режиме)
 
 import streamlit as st
 import pandas as pd
@@ -22,7 +20,6 @@ try:
         calculate_metrics_fast,
         calculate_metrics_dynamic,
         detect_journal_field,
-        fetch_journal_name,
         on_clear_cache_clicked
     )
     JOURNAL_ANALYZER_AVAILABLE = True
@@ -38,8 +35,6 @@ except ImportError as e:
         return None
     def detect_journal_field(*args, **kwargs):
         return "general"
-    def fetch_journal_name(*args, **kwargs):
-        return "Неизвестный журнал"
     def on_clear_cache_clicked(*args, **kwargs):
         return "Кэш не доступен"
 
@@ -136,69 +131,66 @@ def validate_issn(issn):
 def main():
     if not JOURNAL_ANALYZER_AVAILABLE:
         st.warning("⚠️ Работает в упрощенном режиме. Некоторые функции могут быть ограничены.")
-
+    
     st.markdown('<h1 class="main-header">📊 Journal Metrics Analyzer </h1>', unsafe_allow_html=True)
-
+    
     with st.expander("ℹ️ О системе анализа"):
         st.markdown("""
         **Доступные режимы анализа:**
-
+        
         🚀 **Быстрый анализ (Fast Analysis)**
-        - Время выполнения: 5-10 секунд
+        - Время выполнения: 10-30 секунд
         - Базовый расчет метрик через Crossref
         - Упрощенный прогноз
         - Подходит для первоначальной оценки
-
-        🎯 **Точный анализ (Precise Analysis)**
-        - Время выполнения: 30-60 секунд
+        
+        🎯 **Точный анализ (Precise Analysis)** 
+        - Время выполнения: 2-5 минут
         - CiteScore через Crossref
         - Импакт-Фактор через OpenAlex (цитирования 2025 года)
         - Полный анализ самоцитирований
         - Рекомендуется для финальной оценки
-
+        
         🌐 **Динамический анализ (Dynamic Analysis)**
-        - Время выполнения: 20-40 секунд
+        - Время выполнения: 2-5 минут
         - ИФ: цитирования за последние 18–6 месяцев на статьи за 42–18 месяцев назад (OpenAlex)
         - CiteScore: цитирования за 52–4 месяцев назад на статьи за тот же период (OpenAlex)
         - Без прогнозов, текущие метрики
-
+        
         ©Chimica Techno Acta, https://chimicatechnoacta.ru / ©developed by daM
         """)
-
+    
     with st.sidebar:
         st.header("🔍 Параметры анализа")
-
+        
         issn_input = st.text_input(
             "ISSN журнала (формат: XXXX-XXXX):",
             value="2411-1414",
             placeholder="Например: 1548-7660",
             help="Введите ISSN журнала в формате XXXX-XXXX"
         )
-
-        journal_name = fetch_journal_name(issn_input) if issn_input and validate_issn(issn_input) else "Неизвестный журнал"
-        st.write(f"Журнал: {journal_name}")
-
+        
         analysis_mode = st.radio(
             "Режим анализа:",
             ["🚀 Быстрый анализ (Fast Analysis)",
              "🎯 Точный анализ (Precise Analysis)",
              "🌐 Динамический анализ (Dynamic Analysis)"],
-            help="Быстрый: 5-10 сек, Точный/Динамический: 20-60 сек"
+            help="Быстрый: 10-30 сек, Точный/Динамический: 2-5 мин"
         )
-
+        
         use_cache = st.checkbox("Использовать кэш", value=True,
                                help="Ускоряет повторные анализы того же журнала")
-
+        
         analyze_button = st.button(
             "🚀 Запустить анализ",
             type="primary",
             use_container_width=True
         )
-
+        
         if st.button("🧹 Очистить кэш", use_container_width=True):
             result_msg = on_clear_cache_clicked(None)
             st.success(result_msg)
-
+        
         st.markdown("---")
         st.markdown("""
         **Поддерживаемые источники данных:**
@@ -206,16 +198,16 @@ def main():
         - OpenAlex API (в точном и динамическом режимах)
         - Кэшированные данные
         """)
-
+    
     if analyze_button:
         if not issn_input:
             st.error("❌ Пожалуйста, введите ISSN журнала")
             return
-
+        
         if not validate_issn(issn_input):
             st.error("❌ Неверный формат ISSN. Используйте формат: XXXX-XXXX (например: 1548-7660)")
             return
-
+        
         mode_class = {
             "Быстрый": "fast-mode",
             "Точный": "precise-mode",
@@ -227,7 +219,7 @@ def main():
             "Динамический": "🌐 Динамический анализ"
         }[analysis_mode.split()[1]]
         st.markdown(f'<div class="mode-indicator {mode_class}">{mode_text}</div>', unsafe_allow_html=True)
-
+        
         is_precise_mode = "Точный" in analysis_mode
         is_dynamic_mode = "Динамический" in analysis_mode
         analysis_function = (
@@ -235,48 +227,48 @@ def main():
             calculate_metrics_enhanced if is_precise_mode else
             calculate_metrics_fast
         )
-
+        
         if is_precise_mode or is_dynamic_mode:
             st.info("""
-            ⏳ **Анализ может занять 20-60 секунд**
-
+            ⏳ **Анализ может занять 2-5 минут**
+            
             Выполняются:
             - Сбор статей через Crossref
             - Анализ цитирований через OpenAlex для ИФ и CiteScore (в динамическом режиме)
             - Расчет метрик
             """)
-
+        
         try:
             if is_precise_mode or is_dynamic_mode:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
-
-                def update_progress(progress, stage=""):
+                
+                def update_progress(progress):
                     progress_bar.progress(min(progress, 1.0))
-                    status_text.text(f"Прогресс: {int(progress * 100)}% ({stage})")
-
+                    status_text.text(f"Прогресс: {int(progress * 100)}%")
+                
                 start_time = time.time()
-                update_progress(0.0, "Сбор статей...")
-                result = analysis_function(issn_input, journal_name, use_cache, lambda p: update_progress(p, "Сбор статей" if p < 0.4 else "Анализ цитирований ИФ" if p < 0.7 else "Анализ цитирований CiteScore"))
+                status_text.text("🔍 Сбор данных...")
+                result = analysis_function(issn_input, "Chimica Techno Acta", use_cache, progress_callback=update_progress)
                 analysis_time = time.time() - start_time
-
+                
                 if result is None:
                     st.error("Не удалось получить данные для анализа. Проверьте ISSN или наличие статей в Crossref за указанные периоды.")
-                    update_progress(1.0, "Анализ не удался")
+                    status_text.text("Анализ не удался")
                     st.info("Попробуйте очистить кэш или использовать другой ISSN (например, 0028-0836 для Nature).")
                     st.markdown("**Возможные причины ошибки:**")
                     st.markdown("- Журнал не имеет статей за указанные периоды в Crossref.")
                     st.markdown("- Проблемы с API (например, ограничения запросов).")
                     st.markdown("- Устаревший кэш. Попробуйте очистить кэш.")
                     return
-
-                update_progress(1.0, f"Анализ завершен за {analysis_time:.1f} секунд!")
+                
+                status_text.text(f"Анализ завершен за {analysis_time:.1f} секунд!")
             else:
                 with st.spinner("🔄 Выполнение быстрого анализа..."):
                     start_time = time.time()
-                    result = analysis_function(issn_input, journal_name, use_cache)
+                    result = analysis_function(issn_input, "Chimica Techno Acta", use_cache)
                     analysis_time = time.time() - start_time
-
+                
                 if result is None:
                     st.error("Не удалось получить данные для анализа. Проверьте ISSN или наличие статей в Crossref за указанные периоды.")
                     st.info("Попробуйте очистить кэш или использовать другой ISSN (например, 0028-0836 для Nature).")
@@ -285,20 +277,20 @@ def main():
                     st.markdown("- Проблемы с API (например, ограничения запросов).")
                     st.markdown("- Устаревший кэш. Попробуйте очистить кэш.")
                     return
-
+                
                 st.success(f"Анализ завершен за {analysis_time:.1f} секунд!")
-
+            
             display_results(result, is_precise_mode, is_dynamic_mode)
-
+        
         except Exception as e:
             st.error(f"Произошла ошибка при анализе: {str(e)}")
             st.info("Попробуйте очистить кэш, проверить подключение к интернету или использовать другой ISSN.")
 
 def display_results(result, is_precise_mode, is_dynamic_mode):
     """Функция для отображения результатов анализа"""
-
+    
     col1, col2, col3, col4 = st.columns(4)
-
+    
     with col1:
         st.metric("Название журнала", result['journal_name'])
     with col2:
@@ -308,18 +300,18 @@ def display_results(result, is_precise_mode, is_dynamic_mode):
     with col4:
         mode_text = "🌐 Динамический" if is_dynamic_mode else "🎯 Точный" if is_precise_mode else "🚀 Быстрый"
         st.metric("Режим анализа", mode_text)
-
+    
     st.markdown("---")
-
+    
     tab_names = ["📈 Основные метрики", "📊 Статистика", "⚙️ Параметры"]
     if is_precise_mode or is_dynamic_mode:
         tab_names.insert(1, "🔍 Детальный анализ")
-
+    
     tabs = st.tabs(tab_names)
-
+    
     with tabs[0]:
         display_main_metrics(result, is_precise_mode, is_dynamic_mode)
-
+    
     if is_precise_mode or is_dynamic_mode:
         with tabs[1]:
             display_detailed_analysis(result)
@@ -335,82 +327,82 @@ def display_results(result, is_precise_mode, is_dynamic_mode):
 
 def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
     """Отображение основных метрик"""
-
+    
     st.markdown('<h3 class="section-header">🎯 Импакт-Фактор</h3>', unsafe_allow_html=True)
-
+    
     col1, col2, col3 = st.columns(3)
-
+    
     with col1:
         st.metric(
-            "Текущий ИФ",
+            "Текущий ИФ", 
             f"{result['current_if']:.2f}",
             help="Текущее значение на основе цитирований в периоде"
         )
-
+    
     with col2:
         st.metric(
-            "Статьи для расчета",
+            "Статьи для расчета", 
             f"{result['total_articles_if']}",
             help=f"Статьи за {result['if_publication_period' if is_dynamic_mode else 'if_publication_years'][0]}–{result['if_publication_period' if is_dynamic_mode else 'if_publication_years'][1]}"
         )
-
+    
     with col3:
         st.metric(
-            "Цитирований",
+            "Цитирований", 
             f"{result['total_cites_if']}",
             help=f"Цитирования за {result['if_citation_period' if is_dynamic_mode else 'if_publication_years'][0]}–{result['if_citation_period' if is_dynamic_mode else 'if_publication_years'][1]}"
         )
-
+    
     if is_precise_mode and not is_dynamic_mode:
         st.markdown("#### Прогнозы Импакт-Фактора на конец 2025")
         forecast_col1, forecast_col2, forecast_col3 = st.columns(3)
-
+        
         with forecast_col1:
             st.markdown('<div class="forecast-box">', unsafe_allow_html=True)
             st.metric("Консервативный", f"{result['if_forecasts']['conservative']:.2f}")
             st.markdown('</div>', unsafe_allow_html=True)
-
+        
         with forecast_col2:
             st.markdown('<div class="forecast-box">', unsafe_allow_html=True)
             st.metric("Сбалансированный", f"{result['if_forecasts']['balanced']:.2f}")
             st.markdown('</div>', unsafe_allow_html=True)
-
+        
         with forecast_col3:
             st.markdown('<div class="forecast-box">', unsafe_allow_html=True)
             st.metric("Оптимистичный", f"{result['if_forecasts']['optimistic']:.2f}")
             st.markdown('</div>', unsafe_allow_html=True)
-
+    
     st.markdown("---")
-
+    
     st.markdown('<h3 class="section-header">📊 CiteScore</h3>', unsafe_allow_html=True)
-
+    
     col1, col2, col3 = st.columns(3)
-
+    
     with col1:
         st.metric("Текущий CiteScore", f"{result['current_citescore']:.2f}")
-
+    
     with col2:
         st.metric("Статьи для расчета", f"{result['total_articles_cs']}",
                  help=f"Статьи за {result['cs_publication_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_publication_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
-
+    
     with col3:
         st.metric("Цитирований", f"{result['total_cites_cs']}",
                  help=f"Цитирования за {result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
-
+    
     if is_precise_mode and not is_dynamic_mode:
         st.markdown("#### Прогнозы CiteScore на конец 2025")
         forecast_col1, forecast_col2, forecast_col3 = st.columns(3)
-
+        
         with forecast_col1:
             st.markdown('<div class="citescore-forecast-box">', unsafe_allow_html=True)
             st.metric("Консервативный", f"{result['citescore_forecasts']['conservative']:.2f}")
             st.markdown('</div>', unsafe_allow_html=True)
-
+        
         with forecast_col2:
             st.markdown('<div class="citescore-forecast-box">', unsafe_allow_html=True)
             st.metric("Сбалансированный", f"{result['citescore_forecasts']['balanced']:.2f}")
             st.markdown('</div>', unsafe_allow_html=True)
-
+        
         with forecast_col3:
             st.markdown('<div class="citescore-forecast-box">', unsafe_allow_html=True)
             st.metric("Оптимистичный", f"{result['citescore_forecasts']['optimistic']:.2f}")
@@ -418,43 +410,43 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
 
 def display_detailed_analysis(result):
     """Отображение детального анализа (только для точного и динамического режимов)"""
-
+    
     col1, col2 = st.columns(2)
-
+    
     with col1:
         st.subheader("📈 Распределение цитирований")
-
+        
         if result['if_citation_data']:
             if_data = pd.DataFrame(result['if_citation_data'])
             if_data = if_data[['DOI', 'Год публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде']]
             st.dataframe(if_data, use_container_width=True)
         else:
             st.info("Нет данных о цитированиях для импакт-фактора")
-
+    
     with col2:
         st.subheader("🎯 Анализ самоцитирований")
-
+        
         self_citation_rate = result['self_citation_rate']
-
+        
         st.metric("Уровень самоцитирований", f"{self_citation_rate:.1%}")
         st.metric("Примерное количество", f"{result['total_self_citations']:.0f}")
-
+        
         if self_citation_rate > 0.2:
             st.warning("⚠️ Высокий уровень самоцитирований (>20%)")
         elif self_citation_rate > 0.1:
             st.info("ℹ️ Умеренный уровень самоцитирований (10-20%)")
         else:
             st.success("✅ Нормальный уровень самоцитирований (<10%)")
-
+    
     if result['citation_model_data']:
         st.subheader("📅 Временная модель цитирований")
         st.info(f"Построена модель на основе {len(result['citation_model_data'])} лет исторических данных")
 
 def display_statistics(result):
     """Отображение статистики"""
-
+    
     st.subheader("📊 Статистика по статьям")
-
+    
     if result['if_citation_data']:
         st.markdown("#### Для импакт-фактора")
         df_if = pd.DataFrame(result['if_citation_data'])
@@ -473,7 +465,7 @@ def display_statistics(result):
         st.dataframe(if_stats, use_container_width=True)
     else:
         st.info("Нет данных о статьях для импакт-фактора")
-
+    
     if result['cs_citation_data']:
         st.markdown("#### Для CiteScore")
         df_cs = pd.DataFrame(result['cs_citation_data'])
@@ -495,11 +487,11 @@ def display_statistics(result):
 
 def display_parameters(result, is_precise_mode, is_dynamic_mode):
     """Отображение параметров расчета"""
-
+    
     st.subheader("⚙️ Параметры расчета")
-
+    
     col1, col2 = st.columns(2)
-
+    
     with col1:
         st.markdown("**Периоды расчета:**")
         if is_dynamic_mode:
@@ -509,21 +501,21 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
         else:
             st.write(f"- Импакт-фактор: {result['if_publication_years'][0]}-{result['if_publication_years'][1]}")
             st.write(f"- CiteScore: {result['cs_publication_years'][0]}-{result['cs_publication_years'][-1]}")
-
+        
         st.markdown("**Анализ самоцитирований:**")
         st.write(f"- Уровень самоцитирований: {result['self_citation_rate']:.1%}")
         st.write(f"- Примерное количество: {result['total_self_citations']}")
-
+    
     with col2:
         st.markdown("**Дата анализа:**")
         st.write(result['analysis_date'].strftime('%d.%m.%Y'))
-
+        
         if is_precise_mode and not is_dynamic_mode:
             st.markdown("**Коэффициенты прогноза:**")
             st.write(f"- Консервативный: {result['multipliers']['conservative']:.2f}x")
             st.write(f"- Сбалансированный: {result['multipliers']['balanced']:.2f}x")
             st.write(f"- Оптимистичный: {result['multipliers']['optimistic']:.2f}x")
-
+        
         st.markdown("**Качество анализа:**")
         if is_dynamic_mode:
             st.success("✅ Динамический анализ с OpenAlex для ИФ и CiteScore")
