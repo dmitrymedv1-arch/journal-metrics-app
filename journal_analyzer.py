@@ -224,66 +224,126 @@ def detect_journal_field(issn, journal_name):
 
     return "general"
 
+def fetch_past_year_articles(issn, years, use_cache=True):
+    """Получение статей за прошлые годы для базового IF"""
+    all_items = []
+    excluded_types = {
+        'editorial', 'letter', 'correction', 'retraction',
+        'book-review', 'news', 'announcement', 'abstract'
+    }
+    
+    for year in years:
+        from_date = f"{year}-01-01"
+        until_date = f"{year}-12-31"
+        items = fetch_articles_fast(issn, from_date, until_date, use_cache)
+        
+        filtered_items = []
+        for item in items:
+            item_type = item.get('type', '').lower()
+            if item_type not in excluded_types:
+                filtered_items.append(item)
+        all_items.extend(filtered_items)
+    
+    return all_items
+
+def fetch_current_year_progress(issn, current_date, use_cache=True):
+    """Получение статей текущего года до текущей даты"""
+    current_year = current_date.year
+    from_date = f"{current_year}-01-01"
+    until_date = current_date.strftime("%Y-%m-%d")
+    
+    items = fetch_articles_fast(issn, from_date, until_date, use_cache)
+    excluded_types = {
+        'editorial', 'letter', 'correction', 'retraction',
+        'book-review', 'news', 'announcement', 'abstract'
+    }
+    
+    filtered_items = []
+    for item in items:
+        item_type = item.get('type', '').lower()
+        if item_type not in excluded_types:
+            filtered_items.append(item)
+    
+    return filtered_items
+
 def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=True):
-    """БЫСТРАЯ функция для расчета метрик"""
+    """ИСПРАВЛЕННАЯ БЫСТРАЯ функция для расчета метрик"""
     try:
         current_date = date.today()
         current_year = current_date.year
 
         journal_field = detect_journal_field(issn, journal_name)
-
-        # Периоды для расчета
-        if_publication_years = [current_year - 2, current_year - 1]
-        cs_publication_years = list(range(current_year - 3, current_year + 1))
-
-        # Собираем статьи (быстро)
-        if_items = []
-        for year in if_publication_years:
-            from_date = f"{year}-01-01"
-            until_date = f"{year}-12-31"
-            items = fetch_articles_fast(issn, from_date, until_date, use_cache)
-            if_items.extend(items)
-
-        cs_items = []
-        for year in cs_publication_years:
-            from_date = f"{year}-01-01"
-            until_date = f"{year}-12-31"
-            items = fetch_articles_fast(issn, from_date, until_date, use_cache)
-            cs_items.extend(items)
-
-        B_if = len(if_items)
-        B_cs = len(cs_items)
-
-        if B_if == 0 or B_cs == 0:
-            return None
-
-        # Быстрый расчет цитирований
-        A_if_current = sum(item.get('is-referenced-by-count', 0) for item in if_items)
-        A_cs_current = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
-
-        # Текущие значения метрик
-        current_if = A_if_current / B_if if B_if > 0 else 0
-        current_citescore = A_cs_current / B_cs if B_cs > 0 else 0
-
-        # Упрощенные прогнозы
         seasonal_coefficients = get_seasonal_coefficients(journal_field)
-        multiplier = calculate_weighted_multiplier(current_date, seasonal_coefficients, "balanced")
+
+        # 1. СТАТЬИ ЗА ПРОШЛЫЕ ГОДЫ (для базового IF)
+        if_publication_years = [current_year - 2, current_year - 1]
+        if_items_past = fetch_past_year_articles(issn, if_publication_years, use_cache)
         
-        # Прогнозы для импакт-фактора
-        if_forecasts = {
-            'conservative': current_if * multiplier * 0.8,
-            'balanced': current_if * multiplier,
-            'optimistic': current_if * multiplier * 1.2
-        }
+        B_past = len(if_items_past)
+        A_past = sum(item.get('is-referenced-by-count', 0) for item in if_items_past)
+        base_if = A_past / B_past if B_past > 0 else 0
 
-        # Прогнозы для CiteScore
-        citescore_forecasts = {
-            'conservative': current_citescore * multiplier * 0.8,
-            'balanced': current_citescore * multiplier,
-            'optimistic': current_citescore * multiplier * 1.2
-        }
+        # 2. ПРОГРЕСС ТЕКУЩЕГО ГОДА
+        current_year_items = fetch_current_year_progress(issn, current_date, use_cache)
+        B_current = len(current_year_items)
+        A_current = sum(item.get('is-referenced-by-count', 0) for item in current_year_items)
+        current_year_if = A_current / B_current if B_current > 0 else 0
 
-        # Упрощенные доверительные интервалы
+        # 3. РАСЧЕТ МНОЖИТЕЛЕЙ ДЛЯ ОСТАВШЕЙСЯ ЧАСТИ ГОДА
+        multiplier_balanced = calculate_weighted_multiplier(current_date, seasonal_coefficients, "balanced")
+        multiplier_conservative = calculate_weighted_multiplier(current_date, seasonal_coefficients, "conservative")
+        multiplier_optimistic = calculate_weighted_multiplier(current_date, seasonal_coefficients, "optimistic")
+
+        # 4. КОРРЕКТНЫЙ ПРОГНОЗ ИМПАКТ-ФАКТОРА
+        if B_current > 0:
+            # Если есть статьи в текущем году - прогноз на основе тренда
+            days_passed = (current_date - date(current_year, 1, 1)).days + 1
+            total_days = 365 if not calendar.isleap(current_year) else 366
+            remaining_factor = total_days / days_passed
+            
+            # Прогнозы с учетом оставшейся части года
+            if_forecasts = {
+                'conservative': current_year_if * remaining_factor * multiplier_conservative,
+                'balanced': current_year_if * remaining_factor * multiplier_balanced,
+                'optimistic': current_year_if * remaining_factor * multiplier_optimistic
+            }
+        else:
+            # Если статей в текущем году нет - прогноз на основе базового IF
+            if_forecasts = {
+                'conservative': base_if * multiplier_conservative,
+                'balanced': base_if * multiplier_balanced,
+                'optimistic': base_if * multiplier_optimistic
+            }
+
+        # 5. ГАРАНТИЯ: прогноз не может быть меньше базового IF
+        for key in if_forecasts:
+            if_forecasts[key] = max(if_forecasts[key], base_if)
+
+        # 6. CITE SCORE (упрощенный расчет с исправлением)
+        cs_publication_years = list(range(current_year - 3, current_year + 1))
+        cs_items_past = fetch_past_year_articles(issn, cs_publication_years[:-1], use_cache)  # без текущего
+        cs_items_current = current_year_items
+        cs_items = cs_items_past + cs_items_current
+        
+        B_cs = len(cs_items)
+        A_cs = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
+        current_citescore = A_cs / B_cs if B_cs > 0 else 0
+
+        # Прогноз CiteScore
+        if B_current > 0:
+            citescore_forecasts = {
+                'conservative': current_citescore * remaining_factor * multiplier_conservative,
+                'balanced': current_citescore * remaining_factor * multiplier_balanced,
+                'optimistic': current_citescore * remaining_factor * multiplier_optimistic
+            }
+        else:
+            citescore_forecasts = {
+                'conservative': current_citescore * multiplier_conservative,
+                'balanced': current_citescore * multiplier_balanced,
+                'optimistic': current_citescore * multiplier_optimistic
+            }
+
+        # 7. ДОВЕРИТЕЛЬНЫЕ ИНТЕРВАЛЫ (упрощенные)
         if_forecasts_ci = {
             'mean': if_forecasts['balanced'],
             'lower_95': if_forecasts['conservative'],
@@ -296,9 +356,9 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
             'upper_95': citescore_forecasts['optimistic']
         }
 
-        # Подготовка данных для отображения
+        # 8. ПОДГОТОВКА ДАННЫХ ДЛЯ ОТОБРАЖЕНИЯ
         if_citation_data = []
-        for item in if_items:
+        for item in if_items_past + current_year_items:
             doi = item.get('DOI', 'N/A')
             cites = item.get('is-referenced-by-count', 0)
             pub_year = item.get('published', {}).get('date-parts', [[None]])[0][0]
@@ -312,150 +372,7 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
             cs_citation_data.append({'DOI': doi, 'Год публикации': pub_year, 'Цитирования': cites})
 
         return {
-            'current_if': current_if,
-            'current_citescore': current_citescore,
-            'if_forecasts': if_forecasts,
-            'citescore_forecasts': citescore_forecasts,
-            'if_forecasts_ci': if_forecasts_ci,
-            'citescore_forecasts_ci': citescore_forecasts_ci,
-            'multipliers': {
-                'conservative': multiplier * 0.8,
-                'balanced': multiplier,
-                'optimistic': multiplier * 1.2
-            },
-            'total_cites_if': A_if_current,
-            'total_articles_if': B_if,
-            'total_cites_cs': A_cs_current,
-            'total_articles_cs': B_cs,
-            'citation_distribution': {},
-            'if_citation_data': if_citation_data,
-            'cs_citation_data': cs_citation_data,
-            'analysis_date': current_date,
-            'if_publication_years': if_publication_years,
-            'cs_publication_years': cs_publication_years,
-            'seasonal_coefficients': seasonal_coefficients,
-            'journal_field': journal_field,
-            'self_citation_rate': 0.05,  # Фиксированное значение для быстрого анализа
-            'total_self_citations': int(A_if_current * 0.05),
-            'issn': issn,
-            'journal_name': journal_name,
-            'citation_model_data': [],
-            'bootstrap_stats': {
-                'if_mean': current_if,
-                'if_lower': if_forecasts['conservative'],
-                'if_upper': if_forecasts['optimistic'],
-                'cs_mean': current_citescore,
-                'cs_lower': citescore_forecasts['conservative'],
-                'cs_upper': citescore_forecasts['optimistic']
-            }
-        }
-
-    except Exception as e:
-        print(f"Ошибка в calculate_metrics_fast: {e}")
-        return None
-
-def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cache=True):
-    """УСОВЕРШЕНСТВОВАННАЯ функция для расчета метрик"""
-    try:
-        current_date = date.today()
-        current_year = current_date.year
-
-        journal_field = detect_journal_field(issn, journal_name)
-
-        # Периоды для расчета
-        if_publication_years = [current_year - 2, current_year - 1]
-        cs_publication_years = list(range(current_year - 3, current_year + 1))
-
-        # Собираем статьи (полная версия)
-        all_articles = {}
-        if_items = []
-        for year in if_publication_years:
-            from_date = f"{year}-01-01"
-            until_date = f"{year}-12-31"
-            items = fetch_articles_enhanced(issn, from_date, until_date, use_cache)
-            if_items.extend(items)
-            all_articles[year] = items
-
-        cs_items = []
-        for year in cs_publication_years:
-            if year not in all_articles:
-                from_date = f"{year}-01-01"
-                until_date = f"{year}-12-31"
-                items = fetch_articles_enhanced(issn, from_date, until_date, use_cache)
-                all_articles[year] = items
-            cs_items.extend(all_articles[year])
-
-        B_if = len(if_items)
-        B_cs = len(cs_items)
-
-        if B_if == 0 or B_cs == 0:
-            return None
-
-        # Расчет цитирований
-        A_if_current = sum(item.get('is-referenced-by-count', 0) for item in if_items)
-        A_cs_current = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
-
-        # Текущие значения метрик
-        current_if = A_if_current / B_if if B_if > 0 else 0
-        current_citescore = A_cs_current / B_cs if B_cs > 0 else 0
-
-        # Улучшенные прогнозы
-        seasonal_coefficients = get_seasonal_coefficients(journal_field)
-        multiplier_conservative = calculate_weighted_multiplier(current_date, seasonal_coefficients, "conservative")
-        multiplier_balanced = calculate_weighted_multiplier(current_date, seasonal_coefficients, "balanced")
-        multiplier_optimistic = calculate_weighted_multiplier(current_date, seasonal_coefficients, "optimistic")
-
-        # Прогнозы для импакт-фактора
-        if_forecasts = {
-            'conservative': current_if * multiplier_conservative,
-            'balanced': current_if * multiplier_balanced,
-            'optimistic': current_if * multiplier_optimistic
-        }
-
-        # Прогнозы для CiteScore
-        citescore_forecasts = {
-            'conservative': current_citescore * multiplier_conservative,
-            'balanced': current_citescore * multiplier_balanced,
-            'optimistic': current_citescore * multiplier_optimistic
-        }
-
-        # Доверительные интервалы
-        if_citation_rates = [item.get('is-referenced-by-count', 0) for item in if_items]
-        cs_citation_rates = [item.get('is-referenced-by-count', 0) for item in cs_items]
-
-        if_boot_mean, if_boot_lower, if_boot_upper = bootstrap_confidence_intervals(if_citation_rates, n_bootstrap=500)
-        cs_boot_mean, cs_boot_lower, cs_boot_upper = bootstrap_confidence_intervals(cs_citation_rates, n_bootstrap=500)
-
-        # Прогнозы с доверительными интервалами
-        if_forecasts_ci = {
-            'mean': if_forecasts['balanced'],
-            'lower_95': if_forecasts['balanced'] * (if_boot_lower / if_boot_mean if if_boot_mean > 0 else 0.8),
-            'upper_95': if_forecasts['balanced'] * (if_boot_upper / if_boot_mean if if_boot_mean > 0 else 1.2)
-        }
-
-        citescore_forecasts_ci = {
-            'mean': citescore_forecasts['balanced'],
-            'lower_95': citescore_forecasts['balanced'] * (cs_boot_lower / cs_boot_mean if cs_boot_mean > 0 else 0.8),
-            'upper_95': citescore_forecasts['balanced'] * (cs_boot_upper / cs_boot_mean if cs_boot_mean > 0 else 1.2)
-        }
-
-        # Подготовка данных для отображения
-        if_citation_data = []
-        for item in if_items:
-            doi = item.get('DOI', 'N/A')
-            cites = item.get('is-referenced-by-count', 0)
-            pub_year = item.get('published', {}).get('date-parts', [[None]])[0][0]
-            if_citation_data.append({'DOI': doi, 'Год публикации': pub_year, 'Цитирования': cites})
-
-        cs_citation_data = []
-        for item in cs_items:
-            doi = item.get('DOI', 'N/A')
-            cites = item.get('is-referenced-by-count', 0)
-            pub_year = item.get('published', {}).get('date-parts', [[None]])[0][0]
-            cs_citation_data.append({'DOI': doi, 'Год публикации': pub_year, 'Цитирования': cites})
-
-        return {
-            'current_if': current_if,
+            'current_if': base_if,
             'current_citescore': current_citescore,
             'if_forecasts': if_forecasts,
             'citescore_forecasts': citescore_forecasts,
@@ -466,9 +383,183 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
                 'balanced': multiplier_balanced,
                 'optimistic': multiplier_optimistic
             },
-            'total_cites_if': A_if_current,
-            'total_articles_if': B_if,
-            'total_cites_cs': A_cs_current,
+            'total_cites_if': A_past + A_current,
+            'total_articles_if': B_past + B_current,
+            'total_cites_cs': A_cs,
+            'total_articles_cs': B_cs,
+            'citation_distribution': {},
+            'if_citation_data': if_citation_data,
+            'cs_citation_data': cs_citation_data,
+            'analysis_date': current_date,
+            'if_publication_years': if_publication_years,
+            'cs_publication_years': cs_publication_years,
+            'seasonal_coefficients': seasonal_coefficients,
+            'journal_field': journal_field,
+            'self_citation_rate': 0.05,
+            'total_self_citations': int((A_past + A_current) * 0.05),
+            'issn': issn,
+            'journal_name': journal_name,
+            'citation_model_data': [],
+            'bootstrap_stats': {
+                'if_mean': base_if,
+                'if_lower': if_forecasts['conservative'],
+                'if_upper': if_forecasts['optimistic'],
+                'cs_mean': current_citescore,
+                'cs_lower': citescore_forecasts['conservative'],
+                'cs_upper': citescore_forecasts['optimistic']
+            },
+            # ДОПОЛНИТЕЛЬНЫЕ ДАННЫЕ ДЛЯ ОТЛАДКИ
+            'base_if': base_if,
+            'current_year_if': current_year_if,
+            'articles_past': B_past,
+            'cites_past': A_past,
+            'articles_current': B_current,
+            'cites_current': A_current,
+            'days_passed': (current_date - date(current_year, 1, 1)).days + 1,
+            'remaining_factor': total_days / ((current_date - date(current_year, 1, 1)).days + 1)
+        }
+
+    except Exception as e:
+        print(f"Ошибка в calculate_metrics_fast: {e}")
+        return None
+
+def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cache=True):
+    """ИСПРАВЛЕННАЯ УСОВЕРШЕНСТВОВАННАЯ функция для расчета метрик"""
+    try:
+        current_date = date.today()
+        current_year = current_date.year
+
+        journal_field = detect_journal_field(issn, journal_name)
+        seasonal_coefficients = get_seasonal_coefficients(journal_field)
+
+        # 1. СТАТЬИ ЗА ПРОШЛЫЕ ГОДЫ (полная версия)
+        if_publication_years = [current_year - 2, current_year - 1]
+        if_items_past = []
+        for year in if_publication_years:
+            from_date = f"{year}-01-01"
+            until_date = f"{year}-12-31"
+            items = fetch_articles_enhanced(issn, from_date, until_date, use_cache)
+            if_items_past.extend(items)
+
+        B_past = len(if_items_past)
+        A_past = sum(item.get('is-referenced-by-count', 0) for item in if_items_past)
+        base_if = A_past / B_past if B_past > 0 else 0
+
+        # 2. ПРОГРЕСС ТЕКУЩЕГО ГОДА (полная версия)
+        current_year_items = []
+        current_year = current_date.year
+        from_date = f"{current_year}-01-01"
+        until_date = current_date.strftime("%Y-%m-%d")
+        items = fetch_articles_enhanced(issn, from_date, until_date, use_cache)
+        current_year_items.extend(items)
+        
+        B_current = len(current_year_items)
+        A_current = sum(item.get('is-referenced-by-count', 0) for item in current_year_items)
+        current_year_if = A_current / B_current if B_current > 0 else 0
+
+        # 3. РАСЧЕТ МНОЖИТЕЛЕЙ
+        multiplier_conservative = calculate_weighted_multiplier(current_date, seasonal_coefficients, "conservative")
+        multiplier_balanced = calculate_weighted_multiplier(current_date, seasonal_coefficients, "balanced")
+        multiplier_optimistic = calculate_weighted_multiplier(current_date, seasonal_coefficients, "optimistic")
+
+        # 4. КОРРЕКТНЫЙ ПРОГНОЗ ИМПАКТ-ФАКТОРА
+        total_days = 365 if not calendar.isleap(current_year) else 366
+        days_passed = (current_date - date(current_year, 1, 1)).days + 1
+        remaining_factor = total_days / days_passed
+        
+        if B_current > 0:
+            if_forecasts = {
+                'conservative': current_year_if * remaining_factor * multiplier_conservative,
+                'balanced': current_year_if * remaining_factor * multiplier_balanced,
+                'optimistic': current_year_if * remaining_factor * multiplier_optimistic
+            }
+        else:
+            if_forecasts = {
+                'conservative': base_if * multiplier_conservative,
+                'balanced': base_if * multiplier_balanced,
+                'optimistic': base_if * multiplier_optimistic
+            }
+
+        # 5. ГАРАНТИЯ: прогноз >= базового IF
+        for key in if_forecasts:
+            if_forecasts[key] = max(if_forecasts[key], base_if)
+
+        # 6. CITE SCORE (полная версия)
+        cs_publication_years = list(range(current_year - 3, current_year + 1))
+        cs_items_past = []
+        for year in cs_publication_years[:-1]:  # без текущего
+            from_date = f"{year}-01-01"
+            until_date = f"{year}-12-31"
+            items = fetch_articles_enhanced(issn, from_date, until_date, use_cache)
+            cs_items_past.extend(items)
+        
+        cs_items = cs_items_past + current_year_items
+        B_cs = len(cs_items)
+        A_cs = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
+        current_citescore = A_cs / B_cs if B_cs > 0 else 0
+
+        if B_current > 0:
+            citescore_forecasts = {
+                'conservative': current_citescore * remaining_factor * multiplier_conservative,
+                'balanced': current_citescore * remaining_factor * multiplier_balanced,
+                'optimistic': current_citescore * remaining_factor * multiplier_optimistic
+            }
+        else:
+            citescore_forecasts = {
+                'conservative': current_citescore * multiplier_conservative,
+                'balanced': current_citescore * multiplier_balanced,
+                'optimistic': current_citescore * multiplier_optimistic
+            }
+
+        # 7. BOOTSTRAP ДОВЕРИТЕЛЬНЫЕ ИНТЕРВАЛЫ
+        if_citation_rates = [item.get('is-referenced-by-count', 0) for item in if_items_past + current_year_items]
+        cs_citation_rates = [item.get('is-referenced-by-count', 0) for item in cs_items]
+
+        if_boot_mean, if_boot_lower, if_boot_upper = bootstrap_confidence_intervals(if_citation_rates, n_bootstrap=500)
+        cs_boot_mean, cs_boot_lower, cs_boot_upper = bootstrap_confidence_intervals(cs_citation_rates, n_bootstrap=500)
+
+        if_forecasts_ci = {
+            'mean': if_forecasts['balanced'],
+            'lower_95': max(if_forecasts['conservative'], if_boot_lower),
+            'upper_95': if_forecasts['optimistic']
+        }
+
+        citescore_forecasts_ci = {
+            'mean': citescore_forecasts['balanced'],
+            'lower_95': max(citescore_forecasts['conservative'], cs_boot_lower),
+            'upper_95': citescore_forecasts['optimistic']
+        }
+
+        # 8. ПОДГОТОВКА ДАННЫХ
+        if_citation_data = []
+        for item in if_items_past + current_year_items:
+            doi = item.get('DOI', 'N/A')
+            cites = item.get('is-referenced-by-count', 0)
+            pub_year = item.get('published', {}).get('date-parts', [[None]])[0][0]
+            if_citation_data.append({'DOI': doi, 'Год публикации': pub_year, 'Цитирования': cites})
+
+        cs_citation_data = []
+        for item in cs_items:
+            doi = item.get('DOI', 'N/A')
+            cites = item.get('is-referenced-by-count', 0)
+            pub_year = item.get('published', {}).get('date-parts', [[None]])[0][0]
+            cs_citation_data.append({'DOI': doi, 'Год публикации': pub_year, 'Цитирования': cites})
+
+        return {
+            'current_if': base_if,
+            'current_citescore': current_citescore,
+            'if_forecasts': if_forecasts,
+            'citescore_forecasts': citescore_forecasts,
+            'if_forecasts_ci': if_forecasts_ci,
+            'citescore_forecasts_ci': citescore_forecasts_ci,
+            'multipliers': {
+                'conservative': multiplier_conservative,
+                'balanced': multiplier_balanced,
+                'optimistic': multiplier_optimistic
+            },
+            'total_cites_if': A_past + A_current,
+            'total_articles_if': B_past + B_current,
+            'total_cites_cs': A_cs,
             'total_articles_cs': B_cs,
             'citation_distribution': dict(seasonal_coefficients),
             'if_citation_data': if_citation_data,
@@ -478,8 +569,8 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
             'cs_publication_years': cs_publication_years,
             'seasonal_coefficients': seasonal_coefficients,
             'journal_field': journal_field,
-            'self_citation_rate': 0.05,  # Для совместимости
-            'total_self_citations': int(A_if_current * 0.05),
+            'self_citation_rate': 0.05,
+            'total_self_citations': int((A_past + A_current) * 0.05),
             'issn': issn,
             'journal_name': journal_name,
             'citation_model_data': [],
@@ -490,7 +581,15 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
                 'cs_mean': cs_boot_mean,
                 'cs_lower': cs_boot_lower,
                 'cs_upper': cs_boot_upper
-            }
+            },
+            # ДОПОЛНИТЕЛЬНЫЕ ДАННЫЕ
+            'base_if': base_if,
+            'current_year_if': current_year_if,
+            'articles_past': B_past,
+            'cites_past': A_past,
+            'articles_current': B_current,
+            'cites_current': A_current,
+            'remaining_factor': remaining_factor
         }
 
     except Exception as e:
