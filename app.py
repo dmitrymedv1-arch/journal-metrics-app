@@ -142,7 +142,7 @@ st.markdown("""
         margin: 0.2rem 0;
     }
     .markdown-text-container p, .markdown-text-container li {
-        line-height: 1.2 !important;
+        line-height: 1.0 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -631,6 +631,7 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
+
 
 
 
