@@ -519,7 +519,7 @@ def display_detailed_analysis(result):
         if result['cs_citation_data']:
             st.markdown("#### Для CiteScore")
             cs_data = pd.DataFrame(result['cs_citation_data'])
-            cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде']]
+            cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде', 'Цитирования после периода']]
             st.dataframe(cs_data, use_container_width=True)
         else:
             st.info("Нет данных о цитированиях для CiteScore")
@@ -631,6 +631,7 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
+
 
 
 
