@@ -170,7 +170,7 @@ def main():
         🎯 **Точный анализ (Precise Analysis)** 
         - Время выполнения: 2-5 минут
         - CiteScore через Crossref
-        - Импакт-Фактор через OpenAlex (цитирования 2025 года)
+        - Импакт-Фактор через OpenAlex (цитирования текущего года)
         - **Параллельные запросы OpenAlex** для ускорения
         - Полный анализ самоцитирований
         - Рекомендуется для финальной оценки
@@ -178,7 +178,7 @@ def main():
         🌐 **Динамический анализ (Dynamic Analysis)**
         - Время выполнения: 2-5 минут
         - ИФ: цитирования за последние 18–6 месяцев на статьи за 42–18 месяцев назад (OpenAlex)
-        - CiteScore: цитирования за 52–4 месяца назад на статьи за 2021–2025 (OpenAlex и Crossref)
+        - CiteScore: цитирования за 52–4 месяца назад на статьи за за 52–4 месяцев назад (OpenAlex и Crossref)
         - **Параллельные запросы OpenAlex** для ускорения
         - Без прогнозов, текущие метрики
         
@@ -426,7 +426,7 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
         )
     
     if is_precise_mode and not is_dynamic_mode:
-        st.markdown("#### Прогнозы Импакт-Фактора на конец 2025")
+        st.markdown("#### Прогнозы Импакт-Фактора на конец текущего года")
         forecast_col1, forecast_col2, forecast_col3 = st.columns(3)
         
         with forecast_col1:
@@ -479,7 +479,7 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
                      help=f"Цитирования за {result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
     
     if is_precise_mode and not is_dynamic_mode:
-        st.markdown("#### Прогнозы CiteScore на конец 2025")
+        st.markdown("#### Прогнозы CiteScore на конец текущего года")
         forecast_col1, forecast_col2, forecast_col3 = st.columns(3)
         
         with forecast_col1:
@@ -627,6 +627,7 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
+
 
 
 
