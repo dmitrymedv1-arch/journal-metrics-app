@@ -831,8 +831,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
                         'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
-                        'Цитирования (OpenAlex)': result['total_count'],
-                        'Цитирования в периоде': result['count']
+                        'Цитирования (OpenAlex)': result['total_count']
                     })
                 else:
                     if_citation_data.append({
@@ -864,8 +863,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
                         'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
-                        'Цитирования (OpenAlex)': result['total_count'],
-                        'Цитирования в периоде': result['count']
+                        'Цитирования (OpenAlex)': result['total_count']
                     })
                 else:
                     if_citation_data.append({
@@ -1031,6 +1029,7 @@ def on_clear_cache_clicked(b):
     except Exception as e:
         print(f"Ошибка при очистке кэша: {e}")
         return f"Ошибка при очистке кэша: {e}"
+
 
 
 
