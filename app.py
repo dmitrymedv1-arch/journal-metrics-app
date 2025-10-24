@@ -419,8 +419,7 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
         st.metric(
             "Цитирований", 
             f"{result['total_cites_if']}",
-            citation_period = [current_year, current_year] if not is_dynamic_mode else result['if_citation_period']
-            help=f"Цитирования за {citation_period[0]}–{citation_period[1]}"
+            help=f"Цитирования за {result['if_citation_period' if is_dynamic_mode else 'if_publication_years'][0]}–{result['if_publication_years'][1]}"
         )
     
     if is_precise_mode and not is_dynamic_mode:
@@ -625,4 +624,5 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
+
 
