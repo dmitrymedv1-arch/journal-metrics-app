@@ -1,8 +1,6 @@
-# Количество строк: 585
-# Изменения: 
-# +45 строк: get_journal_name_from_issn (Crossref + OpenAlex)
-# +75 строк: parallel_fetch_citations_openalex с ThreadPoolExecutor
-# Общий объем увеличен на 120 строк
+# Количество строк: ~615
+# Изменения:
+# +30 строк: обновление calculate_metrics_dynamic для двух CiteScore и добавления даты публикации
 
 import requests
 import pandas as pd
@@ -71,7 +69,6 @@ def load_from_cache(cache_key):
     except:
         return None
 
-# 🆕 НОВАЯ ФУНКЦИЯ: Получение названия журнала по ISSN
 def get_journal_name_from_issn(issn, use_cache=True):
     """
     Определяет правильное название журнала по ISSN:
@@ -133,7 +130,6 @@ def get_journal_name_from_issn(issn, use_cache=True):
     save_to_cache(fallback_name, cache_key)
     return fallback_name
 
-# 🆕 НОВАЯ ФУНКЦИЯ: Параллельное получение цитирований
 def parallel_fetch_citations_openalex(dois_list, citation_start_date, citation_end_date, max_workers=20, progress_callback=None):
     """
     ПАРАЛЛЕЛЬНОЕ получение цитирований через OpenAlex с ThreadPoolExecutor
@@ -149,27 +145,24 @@ def parallel_fetch_citations_openalex(dois_list, citation_start_date, citation_e
             doi, 
             citation_start_date, 
             citation_end_date,
-            update_progress=None  # Отключаем прогресс для отдельных потоков
+            update_progress=None
         )
     
     print(f"🚀 Запуск параллельного анализа {total_dois} DOI ({max_workers} потоков)")
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Отправляем все задачи
         future_to_doi = {
             executor.submit(fetch_single_citation, doi): doi 
             for doi in dois_list
         }
         
-        # Обрабатываем завершенные задачи
         for future in as_completed(future_to_doi):
             doi = future_to_doi[future]
             try:
-                result = future.result(timeout=120)  # 2 минуты таймаут на DOI
+                result = future.result(timeout=120)
                 results[doi] = result
                 processed += 1
                 
-                # Обновляем прогресс каждые 10 DOI
                 if progress_callback and processed % 10 == 0:
                     progress = min(1.0, processed / total_dois)
                     progress_callback(progress)
@@ -186,22 +179,18 @@ def parallel_fetch_citations_openalex(dois_list, citation_start_date, citation_e
                     'publication_year': None
                 }
     
-    # Финальный прогресс
     if progress_callback:
         progress_callback(1.0)
     
     print(f"🎉 Параллельный анализ завершен: {len(results)}/{total_dois} DOI")
     return results
 
-# 🆕 НОВАЯ ФУНКЦИЯ: Валидация параллелизации
 def validate_parallel_openalex(max_workers=20):
     """Проверяет возможность параллельных запросов к OpenAlex"""
     try:
-        # Тестовый запрос
         response = requests.get(f"{base_url_openalex}?per-page=1", timeout=10)
         response.raise_for_status()
         
-        # Проверка лимитов API (OpenAlex позволяет до 1000 req/min)
         if max_workers > 50:
             print("⚠️ max_workers ограничен 50 для стабильности")
             return False, 50
@@ -231,7 +220,7 @@ def fetch_articles_enhanced(issn, from_date, until_date, use_cache=True, progres
         'book-review', 'news', 'announcement', 'abstract'
     }
 
-    total_pages = 10  # Примерное число страниц
+    total_pages = 10
     current_page = 0
 
     while True:
@@ -541,7 +530,6 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
             print(f"Неверный формат ISSN: {issn}")
             return None
 
-        # 🆕 Валидация параллелизации
         parallel_ok, effective_workers = validate_parallel_openalex(max_workers)
         if use_parallel and parallel_ok:
             print(f"✅ Параллелизация включена: {effective_workers} потоков")
@@ -557,7 +545,6 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
             progress_callback(0.0)
             print("Начало сбора статей из Crossref...")
 
-        # Получение статей для ИФ (2023–2024) и CiteScore (2022–2025)
         if_publication_years = [current_year - 2, current_year - 1]
         cs_publication_years = list(range(current_year - 3, current_year + 1))
 
@@ -595,7 +582,6 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
             progress_callback(0.3)
             print("Начало анализа цитирований через OpenAlex...")
 
-        # 🆕 ПАРАЛЛЕЛЬНЫЙ расчет ИФ
         A_if_current = 0
         valid_dois = 0
         if_citation_data = []
@@ -623,6 +609,7 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
                     if_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': item.get('published', {}).get('date-parts', [[None, None, None]])[0][:3],
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': result['total_count'],
                         'Цитирования в периоде': result['count']
@@ -631,12 +618,12 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
                     if_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': item.get('published', {}).get('date-parts', [[None, None, None]])[0][:3],
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': 0,
                         'Цитирования в периоде': 0
                     })
         else:
-            # Последовательный fallback
             for i, item in enumerate(if_items):
                 doi = item.get('DOI', 'N/A')
                 crossref_cites = item.get('is-referenced-by-count', 0)
@@ -652,6 +639,7 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
                     if_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': item.get('published', {}).get('date-parts', [[None, None, None]])[0][:3],
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': result['total_count'],
                         'Цитирования в периоде': result['count']
@@ -660,6 +648,7 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
                     if_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': item.get('published', {}).get('date-parts', [[None, None, None]])[0][:3],
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': 0,
                         'Цитирования в периоде': 0
@@ -667,12 +656,12 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
         
         print(f"Обработано DOI: {valid_dois}/{B_if}, Цитирований в {current_year}: {A_if_current}")
 
-        # Расчет CiteScore: цитирования из Crossref
         A_cs_current = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
         cs_citation_data = [
             {
                 'DOI': item.get('DOI', 'N/A'),
                 'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                'Дата публикации': item.get('published', {}).get('date-parts', [[None, None, None]])[0][:3],
                 'Цитирования (Crossref)': item.get('is-referenced-by-count', 0),
                 'Цитирования (OpenAlex)': 0,
                 'Цитирования в периоде': 0
@@ -752,7 +741,6 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             print(f"Неверный формат ISSN: {issn}")
             return None
 
-        # 🆕 Валидация параллелизации
         parallel_ok, effective_workers = validate_parallel_openalex(max_workers)
         if use_parallel and parallel_ok:
             print(f"✅ Параллелизация включена: {effective_workers} потоков")
@@ -768,16 +756,16 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             print("Начало сбора статей из Crossref...")
 
         # Периоды для ИФ
-        if_citation_start = current_date - timedelta(days=18*30)  # 18 месяцев назад
-        if_citation_end = current_date - timedelta(days=6*30)      # 6 месяцев назад
-        if_article_start = current_date - timedelta(days=42*30)     # 42 месяца назад
-        if_article_end = current_date - timedelta(days=18*30)       # 18 месяцев назад
+        if_citation_start = current_date - timedelta(days=18*30)
+        if_citation_end = current_date - timedelta(days=6*30)
+        if_article_start = current_date - timedelta(days=42*30)
+        if_article_end = current_date - timedelta(days=18*30)
 
-        # Периоды для CiteScore
-        cs_citation_start = current_date - timedelta(days=52*30)    # 52 месяца назад
-        cs_citation_end = current_date - timedelta(days=4*30)       # 4 месяца назад
-        cs_article_start = cs_citation_start
-        cs_article_end = cs_citation_end
+        # Периоды для CiteScore (2021–2025 для корректного учета статей)
+        cs_citation_start = current_date - timedelta(days=52*30)
+        cs_citation_end = current_date - timedelta(days=4*30)
+        cs_article_start = date(2021, 1, 1)  # Явно задаем 2021 год
+        cs_article_end = current_date
 
         # Получение статей для ИФ
         if_items = fetch_articles_enhanced(
@@ -811,7 +799,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             progress_callback(0.3)
             print("Начало параллельного анализа цитирований через OpenAlex...")
 
-        # 🆕 ПАРАЛЛЕЛЬНЫЙ расчет ИФ
+        # ПАРАЛЛЕЛЬНЫЙ расчет ИФ
         A_if_current = 0
         valid_dois_if = 0
         if_citation_data = []
@@ -831,6 +819,8 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             for item in if_items:
                 doi = item.get('DOI', 'N/A')
                 crossref_cites = item.get('is-referenced-by-count', 0)
+                pub_date_parts = item.get('published', {}).get('date-parts', [[None, None, None]])[0]
+                pub_date = f"{pub_date_parts[0] or 'N/A'}-{pub_date_parts[1] or 1:02d}-{pub_date_parts[2] or 1:02d}"
                 
                 if doi != 'N/A' and doi in parallel_results_if:
                     result = parallel_results_if[doi]
@@ -839,6 +829,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                     if_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': result['total_count'],
                         'Цитирования в периоде': result['count']
@@ -847,15 +838,18 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                     if_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': 0,
                         'Цитирования в периоде': 0
                     })
         else:
-            # Последовательный fallback
             for i, item in enumerate(if_items):
                 doi = item.get('DOI', 'N/A')
                 crossref_cites = item.get('is-referenced-by-count', 0)
+                pub_date_parts = item.get('published', {}).get('date-parts', [[None, None, None]])[0]
+                pub_date = f"{pub_date_parts[0] or 'N/A'}-{pub_date_parts[1] or 1:02d}-{pub_date_parts[2] or 1:02d}"
+                
                 if doi != 'N/A':
                     result = fetch_citations_openalex(
                         doi,
@@ -868,6 +862,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                     if_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': result['total_count'],
                         'Цитирования в периоде': result['count']
@@ -876,6 +871,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                     if_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': 0,
                         'Цитирования в периоде': 0
@@ -883,8 +879,9 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         
         print(f"Обработано DOI для ИФ: {valid_dois_if}/{B_if}")
 
-        # 🆕 ПАРАЛЛЕЛЬНЫЙ расчет CiteScore
-        A_cs_current = 0
+        # ПАРАЛЛЕЛЬНЫЙ расчет CiteScore (OpenAlex и Crossref)
+        A_cs_current_openalex = 0
+        A_cs_current_crossref = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
         valid_dois_cs = 0
         cs_citation_data = []
         
@@ -903,14 +900,17 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             for item in cs_items:
                 doi = item.get('DOI', 'N/A')
                 crossref_cites = item.get('is-referenced-by-count', 0)
+                pub_date_parts = item.get('published', {}).get('date-parts', [[None, None, None]])[0]
+                pub_date = f"{pub_date_parts[0] or 'N/A'}-{pub_date_parts[1] or 1:02d}-{pub_date_parts[2] or 1:02d}"
                 
                 if doi != 'N/A' and doi in parallel_results_cs:
                     result = parallel_results_cs[doi]
-                    A_cs_current += result['count']
+                    A_cs_current_openalex += result['count']
                     valid_dois_cs += 1
                     cs_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': result['total_count'],
                         'Цитирования в периоде': result['count']
@@ -919,15 +919,18 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                     cs_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': 0,
                         'Цитирования в периоде': 0
                     })
         else:
-            # Последовательный fallback
             for i, item in enumerate(cs_items):
                 doi = item.get('DOI', 'N/A')
                 crossref_cites = item.get('is-referenced-by-count', 0)
+                pub_date_parts = item.get('published', {}).get('date-parts', [[None, None, None]])[0]
+                pub_date = f"{pub_date_parts[0] or 'N/A'}-{pub_date_parts[1] or 1:02d}-{pub_date_parts[2] or 1:02d}"
+                
                 if doi != 'N/A':
                     result = fetch_citations_openalex(
                         doi,
@@ -935,11 +938,12 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         cs_citation_end,
                         lambda p: progress_callback(0.6 + 0.3 * (i + 1) / B_cs * p) if progress_callback else None
                     )
-                    A_cs_current += result['count']
+                    A_cs_current_openalex += result['count']
                     valid_dois_cs += 1
                     cs_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': result['total_count'],
                         'Цитирования в периоде': result['count']
@@ -948,6 +952,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                     cs_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                        'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': 0,
                         'Цитирования в периоде': 0
@@ -956,7 +961,8 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         print(f"Обработано DOI для CiteScore: {valid_dois_cs}/{B_cs}")
 
         current_if = A_if_current / B_if if B_if > 0 else 0
-        current_citescore = A_cs_current / B_cs if B_cs > 0 else 0
+        current_citescore_openalex = A_cs_current_openalex / B_cs if B_cs > 0 else 0
+        current_citescore_crossref = A_cs_current_crossref / B_cs if B_cs > 0 else 0
 
         if progress_callback:
             progress_callback(0.9)
@@ -970,10 +976,12 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
 
         return {
             'current_if': current_if,
-            'current_citescore': current_citescore,
+            'current_citescore_openalex': current_citescore_openalex,
+            'current_citescore_crossref': current_citescore_crossref,
             'total_cites_if': A_if_current,
             'total_articles_if': B_if,
-            'total_cites_cs': A_cs_current,
+            'total_cites_cs_openalex': A_cs_current_openalex,
+            'total_cites_cs_crossref': A_cs_current_crossref,
             'total_articles_cs': B_cs,
             'citation_distribution': dict(seasonal_coefficients),
             'if_citation_data': if_citation_data,
