@@ -58,14 +58,14 @@ st.set_page_config(
 st.markdown("""
 <style>
     .main-header {
-        font-size: 2.5rem;
+        font-size: 2.0rem;
         color: #1E88E5;
         text-align: center;
         margin-bottom: 2rem;
     }
     .metric-card {
         background-color: #f8f9fa;
-        padding: 1.5rem;
+        padding: 1.3rem;
         border-radius: 10px;
         border-left: 4px solid #1E88E5;
         margin-bottom: 1rem;
@@ -628,6 +628,7 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
+
 
 
 
