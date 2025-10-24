@@ -763,7 +763,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
 
         # Периоды для CiteScore (2021–2025 для корректного учета статей)
         cs_citation_start = current_date - timedelta(days=52*30)
-        cs_citation_end = current_date - timedelta(days=4*30)
+        cs_citation_end = current_date - timedelta(days=0*30)
         cs_article_start = current_date - timedelta(days=52*30)
         cs_article_end = current_date - timedelta(days=4*30)
 
@@ -1031,5 +1031,6 @@ def on_clear_cache_clicked(b):
     except Exception as e:
         print(f"Ошибка при очистке кэша: {e}")
         return f"Ошибка при очистке кэша: {e}"
+
 
 
