@@ -1,3 +1,7 @@
+# Количество строк: ~415
+# Изменения:
+# +15 строк: обновление display_main_metrics для двух CiteScore и display_detailed_analysis для новой колонки
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -20,14 +24,13 @@ try:
         calculate_metrics_dynamic,
         detect_journal_field,
         on_clear_cache_clicked,
-        get_journal_name_from_issn,  # НОВОЕ
-        validate_parallel_openalex  # НОВОЕ
+        get_journal_name_from_issn,
+        validate_parallel_openalex
     )
     JOURNAL_ANALYZER_AVAILABLE = True
 except ImportError as e:
     JOURNAL_ANALYZER_AVAILABLE = False
     st.error(f"Ошибка импорта journal_analyzer: {e}")
-    # Создаем заглушки
     def calculate_metrics_enhanced(*args, **kwargs):
         return None
     def calculate_metrics_fast(*args, **kwargs):
@@ -38,10 +41,10 @@ except ImportError as e:
         return "general"
     def on_clear_cache_clicked(*args, **kwargs):
         return "Кэш не доступен"
-    def get_journal_name_from_issn(*args, **kwargs):  # НОВОЕ
+    def get_journal_name_from_issn(*args, **kwargs):
         return "Неизвестный журнал"
-    def validate_parallel_openalex(*args, **kwargs):  # НОВОЕ
-        return True
+    def validate_parallel_openalex(*args, **kwargs):
+        return True, 20
 
 # Настройка страницы
 st.set_page_config(
@@ -175,13 +178,15 @@ def main():
         🌐 **Динамический анализ (Dynamic Analysis)**
         - Время выполнения: 2-5 минут
         - ИФ: цитирования за последние 18–6 месяцев на статьи за 42–18 месяцев назад (OpenAlex)
-        - CiteScore: цитирования за 52–4 месяца назад на статьи за тот же период (OpenAlex)
+        - CiteScore: цитирования за 52–4 месяца назад на статьи за 2021–2025 (OpenAlex и Crossref)
         - **Параллельные запросы OpenAlex** для ускорения
         - Без прогнозов, текущие метрики
         
         **🆕 Новые возможности:**
         - Автоматическое определение названия журнала по ISSN
         - Параллельная обработка цитирований (ускорение до 5x)
+        - Два значения CiteScore в динамическом режиме (OpenAlex и Crossref)
+        - Колонка с датой публикации в таблице детального анализа
         
         ©Chimica Techno Acta, https://chimicatechnoacta.ru / ©developed by daM
         """)
@@ -196,7 +201,6 @@ def main():
             help="Введите ISSN журнала в формате XXXX-XXXX"
         )
         
-        # НОВОЕ: Автоматическое определение названия журнала
         if issn_input and validate_issn(issn_input):
             with st.spinner("🔍 Определение названия журнала..."):
                 detected_name = get_journal_name_from_issn(issn_input)
@@ -210,7 +214,6 @@ def main():
             help="Быстрый: 10-30 сек, Точный/Динамический: 2-5 мин"
         )
         
-        # НОВОЕ: Настройка параллелизации
         use_parallel = st.checkbox(
             "⚡ Параллельные запросы OpenAlex", 
             value=True,
@@ -228,7 +231,6 @@ def main():
         use_cache = st.checkbox("💾 Использовать кэш", value=True,
                                help="Ускоряет повторные анализы того же журнала")
         
-        # НОВОЕ: Валидация параллелизации
         if use_parallel and (analysis_mode == "🚀 Быстрый анализ (Fast Analysis)"):
             st.warning("⚠️ Параллельные запросы доступны только в точном/динамическом режимах")
             use_parallel = False
@@ -261,7 +263,6 @@ def main():
             st.error("❌ Неверный формат ISSN. Используйте формат: XXXX-XXXX (например: 1548-7660)")
             return
         
-        # НОВОЕ: Получение реального названия журнала
         with st.spinner("🔍 Получение данных о журнале..."):
             real_journal_name = get_journal_name_from_issn(issn_input)
         
@@ -277,9 +278,8 @@ def main():
         }[analysis_mode.split()[1]]
         st.markdown(f'<div class="mode-indicator {mode_class}">{mode_text}</div>', unsafe_allow_html=True)
         
-        # НОВОЕ: Индикатор параллелизации
         if use_parallel:
-            st.markdown('<div class="parallel-indicator">⚡ Параллельная обработка включена ({max_workers} потоков)</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="parallel-indicator">⚡ Параллельная обработка включена ({max_workers} потоков)</div>', unsafe_allow_html=True)
         
         is_precise_mode = "Точный" in analysis_mode
         is_dynamic_mode = "Динамический" in analysis_mode
@@ -311,7 +311,6 @@ def main():
                 start_time = time.time()
                 status_text.text("🔍 Сбор данных...")
                 
-                # НОВОЕ: Передача параметров параллелизации
                 result = analysis_function(
                     issn_input, 
                     real_journal_name, 
@@ -446,18 +445,35 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
     
     st.markdown('<h3 class="section-header">📊 CiteScore</h3>', unsafe_allow_html=True)
     
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric("Текущий CiteScore", f"{result['current_citescore']:.2f}")
-    
-    with col2:
-        st.metric("Статьи для расчета", f"{result['total_articles_cs']}",
-                 help=f"Статьи за {result['cs_publication_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_publication_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
-    
-    with col3:
-        st.metric("Цитирований", f"{result['total_cites_cs']}",
-                 help=f"Цитирования за {result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
+    if is_dynamic_mode:
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("CiteScore (OpenAlex)", f"{result['current_citescore_openalex']:.2f}")
+        
+        with col2:
+            st.metric("CiteScore (Crossref)", f"{result['current_citescore_crossref']:.2f}")
+        
+        with col3:
+            st.metric("Статьи для расчета", f"{result['total_articles_cs']}",
+                     help=f"Статьи за {result['cs_publication_period'][0]}–{result['cs_publication_period'][1]}")
+        
+        with col4:
+            st.metric("Цитирований", f"O: {result['total_cites_cs_openalex']} | C: {result['total_cites_cs_crossref']}",
+                     help=f"Цитирования за {result['cs_citation_period'][0]}–{result['cs_citation_period'][1]}")
+    else:
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.metric("Текущий CiteScore", f"{result['current_citescore']:.2f}")
+        
+        with col2:
+            st.metric("Статьи для расчета", f"{result['total_articles_cs']}",
+                     help=f"Статьи за {result['cs_publication_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_publication_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
+        
+        with col3:
+            st.metric("Цитирований", f"{result['total_cites_cs']}",
+                     help=f"Цитирования за {result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
     
     if is_precise_mode and not is_dynamic_mode:
         st.markdown("#### Прогнозы CiteScore на конец 2025")
@@ -488,10 +504,18 @@ def display_detailed_analysis(result):
         
         if result['if_citation_data']:
             if_data = pd.DataFrame(result['if_citation_data'])
-            if_data = if_data[['DOI', 'Год публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде']]
+            if_data = if_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде']]
             st.dataframe(if_data, use_container_width=True)
         else:
             st.info("Нет данных о цитированиях для импакт-фактора")
+        
+        if result['cs_citation_data']:
+            st.markdown("#### Для CiteScore")
+            cs_data = pd.DataFrame(result['cs_citation_data'])
+            cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде']]
+            st.dataframe(cs_data, use_container_width=True)
+        else:
+            st.info("Нет данных о цитированиях для CiteScore")
     
     with col2:
         st.subheader("🎯 Анализ самоцитирований")
@@ -563,36 +587,40 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("**Периоды расчета:**")
-        if is_dynamic_mode:
-            st.write(f"- ИФ (статьи): {result['if_publication_period'][0].strftime('%Y-%m-%d')}–{result['if_publication_period'][1].strftime('%Y-%m-%d')}")
-            st.write(f"- ИФ (цитирования): {result['if_citation_period'][0].strftime('%Y-%m-%d')}–{result['if_citation_period'][1].strftime('%Y-%m-%d')}")
-            st.write(f"- CiteScore (статьи и цитирования): {result['cs_publication_period'][0].strftime('%Y-%m-%d')}–{result['cs_publication_period'][1].strftime('%Y-%m-%d')}")
-        else:
-            st.write(f"- Импакт-фактор: {result['if_publication_years'][0]}-{result['if_publication_years'][1]}")
-            st.write(f"- CiteScore: {result['cs_publication_years'][0]}-{result['cs_publication_years'][-1]}")
-        
-        st.markdown("**Анализ самоцитирований:**")
-        st.write(f"- Уровень самоцитирований: {result['self_citation_rate']:.1%}")
-        st.write(f"- Примерное количество: {result['total_self_citations']}")
+        st.markdown("#### Общие параметры")
+        st.write(f"**Дата анализа**: {result['analysis_date']}")
+        st.write(f"**Область журнала**: {result['journal_field']}")
+        st.write(f"**Параллельная обработка**: {'Да' if result.get('parallel_processing', False) else 'Нет'}")
+        if result.get('parallel_processing'):
+            st.write(f"**Количество потоков**: {result['parallel_workers']}")
     
     with col2:
-        st.markdown("**Дата анализа:**")
-        st.write(result['analysis_date'].strftime('%d.%m.%Y'))
-        
-        if is_precise_mode and not is_dynamic_mode:
-            st.markdown("**Коэффициенты прогноза:**")
-            st.write(f"- Консервативный: {result['multipliers']['conservative']:.2f}x")
-            st.write(f"- Сбалансированный: {result['multipliers']['balanced']:.2f}x")
-            st.write(f"- Оптимистичный: {result['multipliers']['optimistic']:.2f}x")
-        
-        st.markdown("**Качество анализа:**")
+        st.markdown("#### Периоды анализа")
         if is_dynamic_mode:
-            st.success("✅ Динамический анализ с **параллельными** OpenAlex запросами для ИФ и CiteScore")
-        elif is_precise_mode:
-            st.success("✅ Полный анализ с **параллельными** OpenAlex запросами для ИФ и Crossref для CiteScore")
+            st.write(f"**ИФ - Период публикаций**: {result['if_publication_period'][0]} – {result['if_publication_period'][1]}")
+            st.write(f"**ИФ - Период цитирований**: {result['if_citation_period'][0]} – {result['if_citation_period'][1]}")
+            st.write(f"**CiteScore - Период публикаций**: {result['cs_publication_period'][0]} – {result['cs_publication_period'][1]}")
+            st.write(f"**CiteScore - Период цитирований**: {result['cs_citation_period'][0]} – {result['cs_citation_period'][1]}")
         else:
-            st.info("ℹ️ Быстрый анализ через Crossref")
+            st.write(f"**ИФ - Годы публикаций**: {', '.join(map(str, result['if_publication_years']))}")
+            st.write(f"**CiteScore - Годы публикаций**: {', '.join(map(str, result['cs_publication_years']))}")
+    
+    if not is_dynamic_mode and 'multipliers' in result:
+        st.markdown("#### Множители прогнозирования")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Консервативный", f"{result['multipliers']['conservative']:.2f}")
+        with col2:
+            st.metric("Сбалансированный", f"{result['multipliers']['balanced']:.2f}")
+        with col3:
+            st.metric("Оптимистичный", f"{result['multipliers']['optimistic']:.2f}")
+    
+    st.markdown("#### Сезонные коэффициенты")
+    seasonal_data = pd.DataFrame(
+        list(result['seasonal_coefficients'].items()),
+        columns=['Месяц', 'Коэффициент']
+    )
+    st.dataframe(seasonal_data, use_container_width=True)
 
 if __name__ == "__main__":
     main()
