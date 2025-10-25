@@ -762,7 +762,7 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
 
 def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cache=True, progress_callback=None, use_parallel=True, max_workers=20):
     """ДИНАМИЧЕСКАЯ функция для расчета метрик с динамическими периодами и ДВУМЯ значениями CiteScore"""
-    # Инициализируем переменные заранее, чтобы они были доступны в блоке except
+    # Инициализируем ВСЕ переменные заранее, чтобы они были доступны в блоке except
     current_date = date.today()
     if_article_start = if_article_end = if_citation_start = if_citation_end = None
     cs_article_start = cs_article_end = cs_citation_start = cs_citation_end = None
@@ -770,6 +770,10 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
     if_items = cs_items = []
     journal_field = "general"
     if_citation_data = cs_citation_data = []
+    current_if = current_citescore_crossref = current_citescore_openalex = 0.0
+    A_if_current = A_cs_current_crossref = A_cs_current_openalex = 0
+    valid_dois_if = 0
+    seasonal_coefficients = get_seasonal_coefficients("general")
     
     try:
         print(f"Запуск calculate_metrics_dynamic для ISSN {issn}")
@@ -859,6 +863,9 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                 'cs_citation_period': [cs_citation_start, cs_citation_end],
                 'total_articles_if': B_if,
                 'total_articles_cs': B_cs,
+                'current_if': 0.0,
+                'current_citescore_crossref': 0.0,
+                'current_citescore_openalex': 0.0,
                 'if_citation_data': [],
                 'cs_citation_data': [],
                 'journal_field': journal_field,
@@ -1147,6 +1154,9 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             'cs_citation_period': [cs_citation_start, cs_citation_end] if cs_citation_start else [],
             'total_articles_if': B_if,
             'total_articles_cs': B_cs,
+            'current_if': current_if,
+            'current_citescore_crossref': current_citescore_crossref,
+            'current_citescore_openalex': current_citescore_openalex,
             'if_citation_data': if_citation_data,
             'cs_citation_data': cs_citation_data,
             'journal_field': journal_field,
