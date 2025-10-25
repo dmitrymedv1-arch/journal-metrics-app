@@ -1,7 +1,3 @@
-# Количество строк: ~615
-# Изменения:
-# +30 строк: обновление calculate_metrics_dynamic для двух CiteScore и добавления даты публикации
-
 import requests
 import pandas as pd
 import numpy as np
@@ -497,6 +493,12 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
             'multipliers': {
                 'conservative': max(1.0, multiplier * 0.9),
                 'balanced': max(1.0, multiplier),
+                'optimistic': max(1 citecore': current_citescore,
+            'if_forecasts': if_forecasts,
+            'citescore_forecasts': citescore_forecasts,
+            'multipliers': {
+                'conservative': max(1.0, multiplier * 0.9),
+                'balanced': max(1.0, multiplier),
                 'optimistic': max(1.0, multiplier * 1.1)
             },
             'total_cites_if': A_if_current,
@@ -761,7 +763,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         if_article_start = current_date - timedelta(days=42*30)
         if_article_end = current_date - timedelta(days=18*30)
 
-        # Периоды для CiteScore (2021–2025 для корректного учета статей)
+        # Периоды для CiteScore
         cs_citation_start = current_date - timedelta(days=52*30)
         cs_citation_end = current_date - timedelta(days=4*30)
         cs_article_start = current_date - timedelta(days=52*30)
@@ -905,7 +907,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                 
                 if doi != 'N/A' and doi in parallel_results_cs:
                     result = parallel_results_cs[doi]
-                    A_cs_current_openalex += result['count']
+                    A_cs_current_openalex += result['total_count']  # Используем total_count вместо count
                     valid_dois_cs += 1
                     cs_citation_data.append({
                         'DOI': doi,
@@ -938,7 +940,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         cs_citation_end,
                         lambda p: progress_callback(0.6 + 0.3 * (i + 1) / B_cs * p) if progress_callback else None
                     )
-                    A_cs_current_openalex += result['count']
+                    A_cs_current_openalex += result['total_count']  # Используем total_count вместо count
                     valid_dois_cs += 1
                     cs_citation_data.append({
                         'DOI': doi,
