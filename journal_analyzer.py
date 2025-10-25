@@ -905,7 +905,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                 
                 if doi != 'N/A' and doi in parallel_results_cs:
                     result = parallel_results_cs[doi]
-                    A_cs_current_openalex += result['total_count']
+                    A_cs_current_openalex += result['count']
                     valid_dois_cs += 1
                     cs_citation_data.append({
                         'DOI': doi,
@@ -938,7 +938,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         cs_citation_end,
                         lambda p: progress_callback(0.6 + 0.3 * (i + 1) / B_cs * p) if progress_callback else None
                     )
-                    A_cs_current_openalex += result['total_count']
+                    A_cs_current_openalex += result['count']
                     valid_dois_cs += 1
                     cs_citation_data.append({
                         'DOI': doi,
@@ -960,12 +960,8 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         
         print(f"Обработано DOI для CiteScore: {valid_dois_cs}/{B_cs}")
 
-        # РАСЧЕТ CiteScore (OpenAlex) - ИЗМЕНЕННАЯ ЛОГИКА
-        # Сумма цитирований по колонке "Цитирования (OpenAlex)" в таблице cs_citation_data
-        total_citations_openalex = sum(item['Цитирования (OpenAlex)'] for item in cs_citation_data)
-        current_citescore_openalex = total_citations_openalex / B_cs if B_cs > 0 else 0
-        
         current_if = A_if_current / B_if if B_if > 0 else 0
+        current_citescore_openalex = A_cs_current_openalex / B_cs if B_cs > 0 else 0
         current_citescore_crossref = A_cs_current_crossref / B_cs if B_cs > 0 else 0
 
         if progress_callback:
@@ -984,7 +980,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             'current_citescore_crossref': current_citescore_crossref,
             'total_cites_if': A_if_current,
             'total_articles_if': B_if,
-            'total_cites_cs_openalex': total_citations_openalex,
+            'total_cites_cs_openalex': A_cs_current_openalex,
             'total_cites_cs_crossref': A_cs_current_crossref,
             'total_articles_cs': B_cs,
             'citation_distribution': dict(seasonal_coefficients),
