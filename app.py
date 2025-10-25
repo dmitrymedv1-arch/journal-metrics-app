@@ -452,7 +452,7 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
     
     with col3:
         st.metric("Цитирований", f"{result['total_cites_cs']}",
-                 help=f"Цитирования за {result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][0]}-{result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
+                 help=f"Цитирования за {result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
 
 System: за {result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
 
@@ -605,5 +605,6 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
+
 
 
