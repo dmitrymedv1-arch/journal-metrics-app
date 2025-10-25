@@ -763,7 +763,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
 
         # Периоды для CiteScore (2021–2025 для корректного учета статей)
         cs_citation_start = current_date - timedelta(days=52*30)
-        cs_citation_end = current_date
+        cs_citation_end = current_date - timedelta(days=4*30)
         cs_article_start = current_date - timedelta(days=52*30)
         cs_article_end = current_date - timedelta(days=4*30)
 
@@ -913,8 +913,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': result['total_count'],
-                        'Цитирования в периоде': result['count'],
-                        'Цитирования после периода': result['total_count'] - result['count']
+                        'Цитирования в периоде': result['count']
                     })
                 else:
                     cs_citation_data.append({
@@ -923,8 +922,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': 0,
-                        'Цитирования в периоде': 0,
-                        'Цитирования после периода': 0
+                        'Цитирования в периоде': 0
                     })
         else:
             for i, item in enumerate(cs_items):
@@ -948,8 +946,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': result['total_count'],
-                        'Цитирования в периоде': result['count'],
-                        'Цитирования после периода': result['total_count'] - result['count']
+                        'Цитирования в периоде': result['count']
                     })
                 else:
                     cs_citation_data.append({
@@ -958,8 +955,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': 0,
-                        'Цитирования в периоде': 0,
-                        'Цитирования после периода': 0
+                        'Цитирования в периоде': 0
                     })
         
         print(f"Обработано DOI для CiteScore: {valid_dois_cs}/{B_cs}")
