@@ -730,7 +730,7 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
         return None
 
 def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cache=True, progress_callback=None, use_parallel=True, max_workers=20):
-    """ДИНАМИЧЕСКАЯ функция для расчета метрик с динамическими периодами"""
+    """ДИНАМИЧЕСКАЯ функция для расчета метрик с динамическими периодами и ДВУМЯ значениями CiteScore"""
     try:
         print(f"Запуск calculate_metrics_dynamic для ISSN {issn}")
         if not validate_issn(issn):
@@ -809,7 +809,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                 if_citation_start,
                 if_citation_end,
                 effective_workers,
-                lambda p: progress_callback(0.3 + 0.3 * p)
+                lambda p: progress_callback(0.3 + 0.2 * p)
             )
             
             for item in if_items:
@@ -851,7 +851,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         doi,
                         if_citation_start,
                         if_citation_end,
-                        lambda p: progress_callback(0.3 + 0.3 * (i + 1) / B_if * p) if progress_callback else None
+                        lambda p: progress_callback(0.3 + 0.2 * (i + 1) / B_if * p) if progress_callback else None
                     )
                     A_if_current += result['count']
                     valid_dois_if += 1
@@ -875,22 +875,22 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         
         print(f"Обработано DOI для ИФ: {valid_dois_if}/{B_if}")
 
-        # Расчет CiteScore только через Crossref (без OpenAlex для расчета метрики)
-        # Но сохраняем реальные значения цитирований OpenAlex для отображения
+        # Расчет ДВУХ значений CiteScore: Crossref и OpenAlex
         A_cs_current_crossref = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
+        A_cs_current_openalex = 0
         cs_citation_data = []
         
-        # Получаем реальные цитирования OpenAlex для отображения (но не используем для расчета CiteScore)
+        # Получаем реальные цитирования OpenAlex для расчета второго значения CiteScore
         dois_cs = [item.get('DOI') for item in cs_items if item.get('DOI') != 'N/A']
         
         if use_parallel and dois_cs:
-            print(f" Параллельный анализ {len(dois_cs)} DOI для получения реальных цитирований OpenAlex...")
+            print(f" Параллельный анализ {len(dois_cs)} DOI для получения цитирований OpenAlex для CiteScore...")
             parallel_results_cs = parallel_fetch_citations_openalex(
                 dois_cs,
                 cs_citation_start,
                 cs_citation_end,
                 effective_workers,
-                lambda p: progress_callback(0.6 + 0.3 * p)
+                lambda p: progress_callback(0.5 + 0.4 * p)
             )
             
             for item in cs_items:
@@ -901,13 +901,14 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                 
                 if doi != 'N/A' and doi in parallel_results_cs:
                     result = parallel_results_cs[doi]
+                    A_cs_current_openalex += result['count']  # Суммируем цитирования в периоде для OpenAlex
                     cs_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
                         'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': result['total_count'],  # Реальные значения OpenAlex
-                        'Цитирования в периоде': 0  # Устанавливаем 0, так как колонка будет удалена в отображении
+                        'Цитирования в периоде': result['count']  # Сохраняем для возможного анализа
                     })
                 else:
                     cs_citation_data.append({
@@ -930,15 +931,16 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         doi,
                         cs_citation_start,
                         cs_citation_end,
-                        lambda p: progress_callback(0.6 + 0.3 * (i + 1) / B_cs * p) if progress_callback else None
+                        lambda p: progress_callback(0.5 + 0.4 * (i + 1) / B_cs * p) if progress_callback else None
                     )
+                    A_cs_current_openalex += result['count']  # Суммируем цитирования в периоде для OpenAlex
                     cs_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
                         'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
                         'Цитирования (OpenAlex)': result['total_count'],  # Реальные значения OpenAlex
-                        'Цитирования в периоде': 0
+                        'Цитирования в периоде': result['count']  # Сохраняем для возможного анализа
                     })
                 else:
                     cs_citation_data.append({
@@ -951,9 +953,13 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                     })
         
         print(f"Обработано DOI для CiteScore: {len([d for d in cs_citation_data if d['Цитирования (OpenAlex)'] > 0])}/{B_cs}")
+        print(f"Цитирований Crossref для CiteScore: {A_cs_current_crossref}")
+        print(f"Цитирований OpenAlex для CiteScore: {A_cs_current_openalex}")
 
+        # Расчет ДВУХ значений CiteScore
         current_if = A_if_current / B_if if B_if > 0 else 0
         current_citescore_crossref = A_cs_current_crossref / B_cs if B_cs > 0 else 0
+        current_citescore_openalex = A_cs_current_openalex / B_cs if B_cs > 0 else 0
 
         if progress_callback:
             progress_callback(0.9)
@@ -968,9 +974,11 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         return {
             'current_if': current_if,
             'current_citescore_crossref': current_citescore_crossref,
+            'current_citescore_openalex': current_citescore_openalex,
             'total_cites_if': A_if_current,
             'total_articles_if': B_if,
             'total_cites_cs_crossref': A_cs_current_crossref,
+            'total_cites_cs_openalex': A_cs_current_openalex,
             'total_articles_cs': B_cs,
             'citation_distribution': dict(seasonal_coefficients),
             'if_citation_data': if_citation_data,
