@@ -1,3 +1,7 @@
+# Количество строк: ~415
+# Изменения:
+# +15 строк: обновление display_main_metrics для двух CiteScore и display_detailed_analysis для новой колонки
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -381,7 +385,7 @@ def display_results(result, is_precise_mode, is_dynamic_mode):
 
     if is_precise_mode or is_dynamic_mode:
         with tabs[1]:
-            display_detailed_analysis(result)
+            display_detailed_analysis(result, is_dynamic_mode)
         with tabs[2]:
             display_statistics(result)
         with tabs[3]:
@@ -510,7 +514,7 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
             st.metric("Оптимистичный", f"{result['citescore_forecasts']['optimistic']:.2f}")
             st.markdown('</div>', unsafe_allow_html=True)
 
-def display_detailed_analysis(result):
+def display_detailed_analysis(result, is_dynamic_mode):
     """Отображение детального анализа (только для точного и динамического режимов)"""
     col1, col2 = st.columns(2)
 
@@ -527,7 +531,14 @@ def display_detailed_analysis(result):
         if result['cs_citation_data']:
             st.markdown("#### Для CiteScore")
             cs_data = pd.DataFrame(result['cs_citation_data'])
-            cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде']]
+            
+            # Для динамического режима убираем только колонку "Цитирования в периоде"
+            if is_dynamic_mode:
+                cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)']]
+                st.info("ℹ️ **Примечание:** В динамическом режиме колонка 'Цитирования в периоде' удалена как избыточная. 'Цитирования (OpenAlex)' показывают реальные общие цитирования статей.")
+            else:  # Это точный режим
+                cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде']]
+            
             st.dataframe(cs_data, use_container_width=True)
         else:
             st.info("Нет данных о цитированиях для CiteScore")
