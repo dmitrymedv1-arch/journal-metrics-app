@@ -1,6 +1,7 @@
 # Количество строк: ~615
 # Изменения:
-# +30 строк: обновление calculate_metrics_dynamic для двух CiteScore и добавления даты публикации
+# Удалены расчеты CiteScore по OpenAlex в динамическом режиме
+# Соответствующие изменения в calculate_metrics_dynamic
 
 import requests
 import pandas as pd
@@ -761,7 +762,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         if_article_start = current_date - timedelta(days=42*30)
         if_article_end = current_date - timedelta(days=18*30)
 
-        # Периоды для CiteScore (2021–2025 для корректного учета статей)
+        # Периоды для CiteScore
         cs_citation_start = current_date - timedelta(days=52*30)
         cs_citation_end = current_date - timedelta(days=4*30)
         cs_article_start = current_date - timedelta(days=52*30)
@@ -879,90 +880,23 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         
         print(f"Обработано DOI для ИФ: {valid_dois_if}/{B_if}")
 
-        # ПАРАЛЛЕЛЬНЫЙ расчет CiteScore (OpenAlex и Crossref)
-        A_cs_current_openalex = 0
-        A_cs_current_crossref = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
-        valid_dois_cs = 0
-        cs_citation_data = []
-        
-        dois_cs = [item.get('DOI') for item in cs_items if item.get('DOI') != 'N/A']
-        
-        if use_parallel and dois_cs:
-            print(f"🚀 Параллельный анализ {len(dois_cs)} DOI для CiteScore...")
-            parallel_results_cs = parallel_fetch_citations_openalex(
-                dois_cs,
-                cs_citation_start,
-                cs_citation_end,
-                effective_workers,
-                lambda p: progress_callback(0.6 + 0.3 * p)
-            )
-            
-            for item in cs_items:
-                doi = item.get('DOI', 'N/A')
-                crossref_cites = item.get('is-referenced-by-count', 0)
-                pub_date_parts = item.get('published', {}).get('date-parts', [[None, None, None]])[0]
-                pub_date = f"{pub_date_parts[0] or 'N/A'}-{pub_date_parts[1] or 1:02d}-{pub_date_parts[2] or 1:02d}"
-                
-                if doi != 'N/A' and doi in parallel_results_cs:
-                    result = parallel_results_cs[doi]
-                    A_cs_current_openalex += result['count']
-                    valid_dois_cs += 1
-                    cs_citation_data.append({
-                        'DOI': doi,
-                        'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
-                        'Дата публикации': pub_date,
-                        'Цитирования (Crossref)': crossref_cites,
-                        'Цитирования (OpenAlex)': result['total_count'],
-                        'Цитирования в периоде': result['count']
-                    })
-                else:
-                    cs_citation_data.append({
-                        'DOI': doi,
-                        'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
-                        'Дата публикации': pub_date,
-                        'Цитирования (Crossref)': crossref_cites,
-                        'Цитирования (OpenAlex)': 0,
-                        'Цитирования в периоде': 0
-                    })
-        else:
-            for i, item in enumerate(cs_items):
-                doi = item.get('DOI', 'N/A')
-                crossref_cites = item.get('is-referenced-by-count', 0)
-                pub_date_parts = item.get('published', {}).get('date-parts', [[None, None, None]])[0]
-                pub_date = f"{pub_date_parts[0] or 'N/A'}-{pub_date_parts[1] or 1:02d}-{pub_date_parts[2] or 1:02d}"
-                
-                if doi != 'N/A':
-                    result = fetch_citations_openalex(
-                        doi,
-                        cs_citation_start,
-                        cs_citation_end,
-                        lambda p: progress_callback(0.6 + 0.3 * (i + 1) / B_cs * p) if progress_callback else None
-                    )
-                    A_cs_current_openalex += result['count']
-                    valid_dois_cs += 1
-                    cs_citation_data.append({
-                        'DOI': doi,
-                        'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
-                        'Дата публикации': pub_date,
-                        'Цитирования (Crossref)': crossref_cites,
-                        'Цитирования (OpenAlex)': result['total_count'],
-                        'Цитирования в периоде': result['count']
-                    })
-                else:
-                    cs_citation_data.append({
-                        'DOI': doi,
-                        'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
-                        'Дата публикации': pub_date,
-                        'Цитирования (Crossref)': crossref_cites,
-                        'Цитирования (OpenAlex)': 0,
-                        'Цитирования в периоде': 0
-                    })
-        
-        print(f"Обработано DOI для CiteScore: {valid_dois_cs}/{B_cs}")
+        # Расчет CiteScore (только Crossref)
+        A_cs_current = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
+        cs_citation_data = [
+            {
+                'DOI': item.get('DOI', 'N/A'),
+                'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
+                'Дата публикации': f"{item.get('published', {}).get('date-parts', [[None, None, None]])[0][0] or 'N/A'}-"
+                                f"{item.get('published', {}).get('date-parts', [[None, None, None]])[0][1] or 1:02d}-"
+                                f"{item.get('published', {}).get('date-parts', [[None, None, None]])[0][2] or 1:02d}",
+                'Цитирования (Crossref)': item.get('is-referenced-by-count', 0),
+                'Цитирования (OpenAlex)': 0,
+                'Цитирования в периоде': 0
+            } for item in cs_items
+        ]
 
         current_if = A_if_current / B_if if B_if > 0 else 0
-        current_citescore_openalex = A_cs_current_openalex / B_cs if B_cs > 0 else 0
-        current_citescore_crossref = A_cs_current_crossref / B_cs if B_cs > 0 else 0
+        current_citescore = A_cs_current / B_cs if B_cs > 0 else 0
 
         if progress_callback:
             progress_callback(0.9)
@@ -976,12 +910,10 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
 
         return {
             'current_if': current_if,
-            'current_citescore_openalex': current_citescore_openalex,
-            'current_citescore_crossref': current_citescore_crossref,
+            'current_citescore': current_citescore,
             'total_cites_if': A_if_current,
             'total_articles_if': B_if,
-            'total_cites_cs_openalex': A_cs_current_openalex,
-            'total_cites_cs_crossref': A_cs_current_crossref,
+            'total_cites_cs': A_cs_current,
             'total_articles_cs': B_cs,
             'citation_distribution': dict(seasonal_coefficients),
             'if_citation_data': if_citation_data,
