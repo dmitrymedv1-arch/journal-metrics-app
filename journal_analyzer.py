@@ -762,56 +762,92 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
 
 def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cache=True, progress_callback=None, use_parallel=True, max_workers=20):
     """ДИНАМИЧЕСКАЯ функция для расчета метрик с динамическими периодами и ДВУМЯ значениями CiteScore"""
-    # Инициализируем ВСЕ переменные заранее, чтобы они были доступны в блоке except
-    current_date = date.today()
-    if_article_start = if_article_end = if_citation_start = if_citation_end = None
-    cs_article_start = cs_article_end = cs_citation_start = cs_citation_end = None
-    B_if = B_cs = 0
-    if_items = cs_items = []
-    journal_field = "general"
-    if_citation_data = cs_citation_data = []
-    current_if = current_citescore_crossref = current_citescore_openalex = 0.0
-    A_if_current = A_cs_current_crossref = A_cs_current_openalex = 0
-    total_cites_if = total_cites_cs_crossref = total_cites_cs_openalex = 0
-    total_articles_if = total_articles_cs = 0
-    total_self_citations = 0
-    valid_dois_if = 0
-    seasonal_coefficients = get_seasonal_coefficients("general")
-    parallel_processing = False
-    parallel_workers = 1
+    # Создаем базовый результат с ВСЕМИ полями
+    base_result = {
+        'error': False,
+        'error_message': '',
+        'issn': issn,
+        'journal_name': journal_name,
+        'analysis_date': date.today(),
+        'if_publication_period': [None, None],
+        'if_citation_period': [None, None],
+        'cs_publication_period': [None, None],
+        'cs_citation_period': [None, None],
+        'total_articles_if': 0,
+        'total_articles_cs': 0,
+        'total_cites_if': 0,
+        'total_cites_cs_crossref': 0,
+        'total_cites_cs_openalex': 0,
+        'current_if': 0.0,
+        'current_citescore_crossref': 0.0,
+        'current_citescore_openalex': 0.0,
+        'if_citation_data': [],
+        'cs_citation_data': [],
+        'journal_field': "general",
+        'self_citation_rate': 0.05,
+        'total_self_citations': 0,
+        'parallel_processing': False,
+        'parallel_workers': 1,
+        'citation_distribution': {},
+        'seasonal_coefficients': {},
+        'citation_model_data': [],
+        'diagnostics': {
+            'if_articles_sample': [],
+            'cs_articles_sample': [],
+            'if_period_dates': '',
+            'cs_period_dates': '',
+            'journal_field': 'general',
+            'crossref_openalex_discrepancy': 0,
+            'articles_with_citations': 0,
+            'valid_dois_ratio': 0,
+            'error_type': ''
+        }
+    }
     
     try:
         print(f"Запуск calculate_metrics_dynamic для ISSN {issn}")
         if not validate_issn(issn):
             print(f"Неверный формат ISSN: {issn}")
-            return None
+            base_result['error'] = True
+            base_result['error_message'] = 'Неверный формат ISSN'
+            return base_result
+
+        # Обновляем базовые поля
+        base_result['analysis_date'] = date.today()
+        base_result['journal_name'] = journal_name
 
         parallel_ok, effective_workers = validate_parallel_openalex(max_workers)
         if use_parallel and parallel_ok:
             print(f" Параллелизация включена: {effective_workers} потоков")
-            parallel_processing = True
-            parallel_workers = effective_workers
+            base_result['parallel_processing'] = True
+            base_result['parallel_workers'] = effective_workers
         else:
-            parallel_processing = False
+            base_result['parallel_processing'] = False
             print(" Параллелизация отключена")
 
-        journal_field = detect_journal_field(issn, journal_name)
+        base_result['journal_field'] = detect_journal_field(issn, journal_name)
 
         if progress_callback:
             progress_callback(0.0)
             print("Начало сбора статей из Crossref...")
 
         # Периоды для ИФ
-        if_citation_start = current_date - timedelta(days=18*30)
-        if_citation_end = current_date - timedelta(days=6*30)
-        if_article_start = current_date - timedelta(days=42*30)
-        if_article_end = current_date - timedelta(days=18*30)
+        if_citation_start = base_result['analysis_date'] - timedelta(days=18*30)
+        if_citation_end = base_result['analysis_date'] - timedelta(days=6*30)
+        if_article_start = base_result['analysis_date'] - timedelta(days=42*30)
+        if_article_end = base_result['analysis_date'] - timedelta(days=18*30)
 
         # Периоды для CiteScore
-        cs_citation_start = current_date - timedelta(days=52*30)
-        cs_citation_end = current_date - timedelta(days=4*30)
-        cs_article_start = current_date - timedelta(days=52*30)
-        cs_article_end = current_date - timedelta(days=4*30)
+        cs_citation_start = base_result['analysis_date'] - timedelta(days=52*30)
+        cs_citation_end = base_result['analysis_date'] - timedelta(days=4*30)
+        cs_article_start = base_result['analysis_date'] - timedelta(days=52*30)
+        cs_article_end = base_result['analysis_date'] - timedelta(days=4*30)
+
+        # Обновляем периоды в результате
+        base_result['if_publication_period'] = [if_article_start, if_article_end]
+        base_result['if_citation_period'] = [if_citation_start, if_citation_end]
+        base_result['cs_publication_period'] = [cs_article_start, cs_article_end]
+        base_result['cs_citation_period'] = [cs_citation_start, cs_citation_end]
 
         # УЛУЧШЕННАЯ ПРОВЕРКА ФОРМАТА ДАТ
         print(f"=== ПАРАМЕТРЫ ДИНАМИЧЕСКОГО АНАЛИЗА ===")
@@ -840,64 +876,29 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             progress_callback
         )
 
-        B_if = len(if_items)
-        B_cs = len(cs_items)
-        total_articles_if = B_if
-        total_articles_cs = B_cs
+        base_result['total_articles_if'] = len(if_items)
+        base_result['total_articles_cs'] = len(cs_items)
         
-        print(f"Статьи для ИФ ({if_article_start}–{if_article_end}): {B_if}")
-        print(f"Статьи для CiteScore ({cs_article_start}–{cs_article_end}): {B_cs}")
+        print(f"Статьи для ИФ ({if_article_start}–{if_article_end}): {base_result['total_articles_if']}")
+        print(f"Статьи для CiteScore ({cs_article_start}–{cs_article_end}): {base_result['total_articles_cs']}")
         
         # УЛУЧШЕННАЯ ПРОВЕРКА ДАННЫХ: более детальная диагностика
-        if B_if == 0:
+        if base_result['total_articles_if'] == 0:
             print(f"❌ ВНИМАНИЕ: Нет статей для ИФ в указанном периоде")
             print(f"   Проверьте параметры: ISSN={issn}, период={if_article_start} до {if_article_end}")
             
-        if B_cs == 0:
+        if base_result['total_articles_cs'] == 0:
             print(f"❌ ВНИМАНИЕ: Нет статей для CiteScore в указанном периоде")
             print(f"   Проверьте параметры: ISSN={issn}, период={cs_article_start} до {cs_article_end}")
             
-        if B_if == 0 or B_cs == 0:
-            print(f"calculate_metrics_dynamic: Нет статей для анализа: IF={B_if}, CS={B_cs}")
-            
-            # ВОЗВРАЩАЕМ ДИАГНОСТИЧЕСКИЕ ДАННЫЕ ДАЖЕ ПРИ ОШИБКЕ
-            diagnostic_data = {
-                'error': True,
-                'error_message': 'Не удалось получить данные для анализа. Проверьте ISSN или наличие статей в Crossref за указанные периоды.',
-                'issn': issn,
-                'journal_name': journal_name,
-                'analysis_date': current_date,
-                'if_publication_period': [if_article_start, if_article_end],
-                'if_citation_period': [if_citation_start, if_citation_end],
-                'cs_publication_period': [cs_article_start, cs_article_end],
-                'cs_citation_period': [cs_citation_start, cs_citation_end],
-                'total_articles_if': total_articles_if,
-                'total_articles_cs': total_articles_cs,
-                'total_cites_if': total_cites_if,
-                'total_cites_cs_crossref': total_cites_cs_crossref,
-                'total_cites_cs_openalex': total_cites_cs_openalex,
-                'current_if': current_if,
-                'current_citescore_crossref': current_citescore_crossref,
-                'current_citescore_openalex': current_citescore_openalex,
-                'if_citation_data': if_citation_data,
-                'cs_citation_data': cs_citation_data,
-                'journal_field': journal_field,
-                'self_citation_rate': 0.05,
-                'total_self_citations': total_self_citations,
-                'parallel_processing': parallel_processing,
-                'parallel_workers': parallel_workers,
-                'diagnostics': {
-                    'if_articles_sample': if_items[:5] if if_items else [],
-                    'cs_articles_sample': cs_items[:5] if cs_items else [],
-                    'if_period_dates': f"{if_article_start} to {if_article_end}",
-                    'cs_period_dates': f"{cs_article_start} to {cs_article_end}",
-                    'journal_field': journal_field
-                }
-            }
+        if base_result['total_articles_if'] == 0 or base_result['total_articles_cs'] == 0:
+            print(f"calculate_metrics_dynamic: Нет статей для анализа")
+            base_result['error'] = True
+            base_result['error_message'] = 'Не удалось получить данные для анализа. Проверьте ISSN или наличие статей в Crossref за указанные периоды.'
             
             # Добавляем примеры статей если они есть
             if if_items:
-                diagnostic_data['if_articles_sample'] = [
+                base_result['diagnostics']['if_articles_sample'] = [
                     {
                         'DOI': item.get('DOI', 'N/A'),
                         'title': item.get('title', ['N/A'])[0],
@@ -908,7 +909,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                 ]
                 
             if cs_items:
-                diagnostic_data['cs_articles_sample'] = [
+                base_result['diagnostics']['cs_articles_sample'] = [
                     {
                         'DOI': item.get('DOI', 'N/A'),
                         'title': item.get('title', ['N/A'])[0],
@@ -918,9 +919,13 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                     } for item in cs_items[:3]
                 ]
             
+            base_result['diagnostics']['if_period_dates'] = f"{if_article_start} to {if_article_end}"
+            base_result['diagnostics']['cs_period_dates'] = f"{cs_article_start} to {cs_article_end}"
+            base_result['diagnostics']['journal_field'] = base_result['journal_field']
+            
             if progress_callback:
                 progress_callback(1.0)
-            return diagnostic_data
+            return base_result
 
         if progress_callback:
             progress_callback(0.3)
@@ -933,13 +938,13 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         
         dois_if = [item.get('DOI') for item in if_items if item.get('DOI') != 'N/A']
         
-        if parallel_processing and dois_if:
+        if base_result['parallel_processing'] and dois_if:
             print(f" Параллельный анализ {len(dois_if)} DOI для ИФ...")
             parallel_results_if = parallel_fetch_citations_openalex(
                 dois_if,
                 if_citation_start,
                 if_citation_end,
-                parallel_workers,
+                base_result['parallel_workers'],
                 lambda p: progress_callback(0.3 + 0.2 * p)
             )
             
@@ -982,7 +987,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         doi,
                         if_citation_start,
                         if_citation_end,
-                        lambda p: progress_callback(0.3 + 0.2 * (i + 1) / B_if * p) if progress_callback else None
+                        lambda p: progress_callback(0.3 + 0.2 * (i + 1) / base_result['total_articles_if'] * p) if progress_callback else None
                     )
                     A_if_current += result['count']
                     valid_dois_if += 1
@@ -1004,7 +1009,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         'Цитирования в периоде': 0
                     })
         
-        print(f"Обработано DOI для ИФ: {valid_dois_if}/{B_if}")
+        print(f"Обработано DOI для ИФ: {valid_dois_if}/{base_result['total_articles_if']}")
 
         # Расчет ДВУХ значений CiteScore: Crossref и OpenAlex
         # Для Crossref используем стандартные данные Crossref
@@ -1017,13 +1022,13 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         # Получаем реальные цитирования OpenAlex для расчета второго значения CiteScore
         dois_cs = [item.get('DOI') for item in cs_items if item.get('DOI') != 'N/A']
         
-        if parallel_processing and dois_cs:
+        if base_result['parallel_processing'] and dois_cs:
             print(f" Параллельный анализ {len(dois_cs)} DOI для получения цитирований OpenAlex для CiteScore...")
             parallel_results_cs = parallel_fetch_citations_openalex(
                 dois_cs,
                 cs_citation_start,
                 cs_citation_end,
-                parallel_workers,
+                base_result['parallel_workers'],
                 lambda p: progress_callback(0.5 + 0.4 * p)
             )
             
@@ -1066,7 +1071,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         doi,
                         cs_citation_start,
                         cs_citation_end,
-                        lambda p: progress_callback(0.5 + 0.4 * (i + 1) / B_cs * p) if progress_callback else None
+                        lambda p: progress_callback(0.5 + 0.4 * (i + 1) / base_result['total_articles_cs'] * p) if progress_callback else None
                     )
                     # ИСПРАВЛЕНИЕ: используем total_count (все цитирования) вместо count (только в периоде)
                     A_cs_current_openalex += result['total_count']
@@ -1088,7 +1093,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         'Цитирования в периоде': 0
                     })
         
-        print(f"Обработано DOI для CiteScore: {len([d for d in cs_citation_data if d['Цитирования (OpenAlex)'] > 0])}/{B_cs}")
+        print(f"Обработано DOI для CiteScore: {len([d for d in cs_citation_data if d['Цитирования (OpenAlex)'] > 0])}/{base_result['total_articles_cs']}")
         print(f"Цитирований Crossref для CiteScore: {A_cs_current_crossref}")
         print(f"Цитирований OpenAlex для CiteScore: {A_cs_current_openalex}")
 
@@ -1105,101 +1110,52 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         print(f"==========================")
 
         # Расчет ДВУХ значений CiteScore
-        current_if = A_if_current / B_if if B_if > 0 else 0
-        current_citescore_crossref = A_cs_current_crossref / B_cs if B_cs > 0 else 0
-        current_citescore_openalex = A_cs_current_openalex / B_cs if B_cs > 0 else 0
+        base_result['current_if'] = A_if_current / base_result['total_articles_if'] if base_result['total_articles_if'] > 0 else 0
+        base_result['current_citescore_crossref'] = A_cs_current_crossref / base_result['total_articles_cs'] if base_result['total_articles_cs'] > 0 else 0
+        base_result['current_citescore_openalex'] = A_cs_current_openalex / base_result['total_articles_cs'] if base_result['total_articles_cs'] > 0 else 0
 
         # Обновляем итоговые переменные
-        total_cites_if = A_if_current
-        total_cites_cs_crossref = A_cs_current_crossref
-        total_cites_cs_openalex = A_cs_current_openalex
-        total_self_citations = int(A_if_current * 0.05)
+        base_result['total_cites_if'] = A_if_current
+        base_result['total_cites_cs_crossref'] = A_cs_current_crossref
+        base_result['total_cites_cs_openalex'] = A_cs_current_openalex
+        base_result['total_self_citations'] = int(A_if_current * 0.05)
+        base_result['if_citation_data'] = if_citation_data
+        base_result['cs_citation_data'] = cs_citation_data
 
         if progress_callback:
             progress_callback(0.9)
             print("Расчет метрик...")
 
-        seasonal_coefficients = get_seasonal_coefficients(journal_field)
+        base_result['seasonal_coefficients'] = get_seasonal_coefficients(base_result['journal_field'])
+        base_result['citation_distribution'] = dict(base_result['seasonal_coefficients'])
+
+        # Обновляем диагностику
+        base_result['diagnostics']['crossref_openalex_discrepancy'] = abs(total_crossref_cites - total_openalex_cites)
+        base_result['diagnostics']['articles_with_citations'] = len([item for item in if_citation_data if item['Цитирования в периоде'] > 0])
+        base_result['diagnostics']['valid_dois_ratio'] = valid_dois_if / base_result['total_articles_if'] if base_result['total_articles_if'] > 0 else 0
+        base_result['diagnostics']['if_articles_sample'] = if_items[:3] if if_items else []
+        base_result['diagnostics']['cs_articles_sample'] = cs_items[:3] if cs_items else []
+        base_result['diagnostics']['if_period_dates'] = f"{if_article_start} to {if_article_end}"
+        base_result['diagnostics']['cs_period_dates'] = f"{cs_article_start} to {cs_article_end}"
+        base_result['diagnostics']['journal_field'] = base_result['journal_field']
 
         if progress_callback:
             progress_callback(1.0)
             print("Анализ завершен")
 
-        return {
-            'current_if': current_if,
-            'current_citescore_crossref': current_citescore_crossref,
-            'current_citescore_openalex': current_citescore_openalex,
-            'total_cites_if': total_cites_if,
-            'total_articles_if': total_articles_if,
-            'total_cites_cs_crossref': total_cites_cs_crossref,
-            'total_cites_cs_openalex': total_cites_cs_openalex,
-            'total_articles_cs': total_articles_cs,
-            'citation_distribution': dict(seasonal_coefficients),
-            'if_citation_data': if_citation_data,
-            'cs_citation_data': cs_citation_data,
-            'analysis_date': current_date,
-            'if_publication_period': [if_article_start, if_article_end],
-            'if_citation_period': [if_citation_start, if_citation_end],
-            'cs_publication_period': [cs_article_start, cs_article_end],
-            'cs_citation_period': [cs_citation_start, cs_citation_end],
-            'seasonal_coefficients': seasonal_coefficients,
-            'journal_field': journal_field,
-            'self_citation_rate': 0.05,
-            'total_self_citations': total_self_citations,
-            'issn': issn,
-            'journal_name': journal_name,
-            'citation_model_data': [],
-            'parallel_processing': parallel_processing,
-            'parallel_workers': parallel_workers,
-            # ДОПОЛНИТЕЛЬНЫЕ ДИАГНОСТИЧЕСКИЕ ДАННЫЕ
-            'diagnostics': {
-                'crossref_openalex_discrepancy': abs(total_crossref_cites - total_openalex_cites),
-                'articles_with_citations': len([item for item in if_citation_data if item['Цитирования в периоде'] > 0]),
-                'valid_dois_ratio': valid_dois_if / B_if if B_if > 0 else 0,
-                'if_articles_sample': if_items[:3] if if_items else [],
-                'cs_articles_sample': cs_items[:3] if cs_items else []
-            }
-        }
+        return base_result
 
     except Exception as e:
         print(f"Ошибка в calculate_metrics_dynamic для ISSN {issn}: {e}")
         
-        # ВОЗВРАЩАЕМ ДИАГНОСТИЧЕСКИЕ ДАННЫЕ ДАЖЕ ПРИ ОШИБКЕ
-        diagnostic_data = {
-            'error': True,
-            'error_message': f'Не удалось получить данные для анализа: {str(e)}',
-            'issn': issn,
-            'journal_name': journal_name,
-            'analysis_date': current_date,
-            'if_publication_period': [if_article_start, if_article_end] if if_article_start else [],
-            'if_citation_period': [if_citation_start, if_citation_end] if if_citation_start else [],
-            'cs_publication_period': [cs_article_start, cs_article_end] if cs_article_start else [],
-            'cs_citation_period': [cs_citation_start, cs_citation_end] if cs_citation_start else [],
-            'total_articles_if': total_articles_if,
-            'total_articles_cs': total_articles_cs,
-            'total_cites_if': total_cites_if,
-            'total_cites_cs_crossref': total_cites_cs_crossref,
-            'total_cites_cs_openalex': total_cites_cs_openalex,
-            'current_if': current_if,
-            'current_citescore_crossref': current_citescore_crossref,
-            'current_citescore_openalex': current_citescore_openalex,
-            'if_citation_data': if_citation_data,
-            'cs_citation_data': cs_citation_data,
-            'journal_field': journal_field,
-            'self_citation_rate': 0.05,
-            'total_self_citations': total_self_citations,
-            'parallel_processing': parallel_processing,
-            'parallel_workers': parallel_workers,
-            'diagnostics': {
-                'if_articles_count': len(if_items),
-                'cs_articles_count': len(cs_items),
-                'error_type': type(e).__name__
-            }
-        }
+        # Обновляем базовый результат с информацией об ошибке
+        base_result['error'] = True
+        base_result['error_message'] = f'Не удалось получить данные для анализа: {str(e)}'
+        base_result['diagnostics']['error_type'] = type(e).__name__
         
         if progress_callback:
             progress_callback(1.0)
-        return diagnostic_data
+        return base_result
 
 def on_clear_cache_clicked(b):
     """Функция для очистки кэша"""
