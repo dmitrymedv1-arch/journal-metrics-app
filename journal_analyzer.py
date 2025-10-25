@@ -762,6 +762,15 @@ def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cac
 
 def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cache=True, progress_callback=None, use_parallel=True, max_workers=20):
     """ДИНАМИЧЕСКАЯ функция для расчета метрик с динамическими периодами и ДВУМЯ значениями CiteScore"""
+    # Инициализируем переменные заранее, чтобы они были доступны в блоке except
+    current_date = date.today()
+    if_article_start = if_article_end = if_citation_start = if_citation_end = None
+    cs_article_start = cs_article_end = cs_citation_start = cs_citation_end = None
+    B_if = B_cs = 0
+    if_items = cs_items = []
+    journal_field = "general"
+    if_citation_data = cs_citation_data = []
+    
     try:
         print(f"Запуск calculate_metrics_dynamic для ISSN {issn}")
         if not validate_issn(issn):
@@ -775,7 +784,6 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             use_parallel = False
             print(" Параллелизация отключена")
 
-        current_date = date.today()
         journal_field = detect_journal_field(issn, journal_name)
 
         if progress_callback:
@@ -853,6 +861,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                 'total_articles_cs': B_cs,
                 'if_citation_data': [],
                 'cs_citation_data': [],
+                'journal_field': journal_field,
                 'diagnostics': {
                     'if_articles_sample': if_items[:5] if if_items else [],
                     'cs_articles_sample': cs_items[:5] if cs_items else [],
@@ -1132,14 +1141,20 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             'issn': issn,
             'journal_name': journal_name,
             'analysis_date': current_date,
-            'if_publication_period': [if_article_start, if_article_end] if 'if_article_start' in locals() else [],
-            'if_citation_period': [if_citation_start, if_citation_end] if 'if_citation_start' in locals() else [],
-            'cs_publication_period': [cs_article_start, cs_article_end] if 'cs_article_start' in locals() else [],
-            'cs_citation_period': [cs_citation_start, cs_citation_end] if 'cs_citation_start' in locals() else [],
-            'total_articles_if': B_if if 'B_if' in locals() else 0,
-            'total_articles_cs': B_cs if 'B_cs' in locals() else 0,
-            'if_citation_data': if_citation_data if 'if_citation_data' in locals() else [],
-            'cs_citation_data': cs_citation_data if 'cs_citation_data' in locals() else [],
+            'if_publication_period': [if_article_start, if_article_end] if if_article_start else [],
+            'if_citation_period': [if_citation_start, if_citation_end] if if_citation_start else [],
+            'cs_publication_period': [cs_article_start, cs_article_end] if cs_article_start else [],
+            'cs_citation_period': [cs_citation_start, cs_citation_end] if cs_citation_start else [],
+            'total_articles_if': B_if,
+            'total_articles_cs': B_cs,
+            'if_citation_data': if_citation_data,
+            'cs_citation_data': cs_citation_data,
+            'journal_field': journal_field,
+            'diagnostics': {
+                'if_articles_count': len(if_items),
+                'cs_articles_count': len(cs_items),
+                'error_type': type(e).__name__
+            }
         }
         
         if progress_callback:
