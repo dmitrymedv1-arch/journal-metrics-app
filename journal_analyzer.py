@@ -357,7 +357,7 @@ def fetch_citations_openalex(doi, citation_start_date, citation_end_date, update
                 if update_progress and cited_by_count > 0:
                     progress = min(1.0, total_processed / cited_by_count)
                     update_progress(progress)
-                time.sleep(0.1)
+                time.sleep(0.3)
                 
             except requests.exceptions.RequestException as e:
                 print(f"DOI {doi}: Ошибка при запросе страницы {page}: {e}")
@@ -548,7 +548,7 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
         print(f"Ошибка в calculate_metrics_fast: {e}")
         return None
 
-def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cache=True, progress_callback=None, use_parallel=True, max_workers=20):
+def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cache=True, progress_callback=None, use_parallel=True, max_workers=5):
     """УСОВЕРШЕНСТВОВАННАЯ функция для расчета метрик с OpenAlex для ИФ"""
     try:
         print(f"Запуск calculate_metrics_enhanced для ISSN {issn}")
@@ -1348,3 +1348,4 @@ def on_clear_cache_clicked(b):
     except Exception as e:
         print(f"Ошибка при очистке кэша: {e}")
         return f"Ошибка при очистке кэша: {e}"
+
