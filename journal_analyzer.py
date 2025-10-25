@@ -74,7 +74,7 @@ def get_journal_name_from_issn(issn, use_cache=True):
     """
     if not validate_issn(issn):
         return f"Журнал ISSN {issn}"
-
+    
     cache_key = get_cache_key("journal_name", issn)
     if use_cache:
         cached_name = load_from_cache(cache_key)
@@ -186,7 +186,7 @@ def validate_parallel_openalex(max_workers=20):
     try:
         response = requests.get(f"{base_url_openalex}?per-page=1", timeout=10)
         response.raise_for_status()
-
+    
         if max_workers > 50:
             print(" max_workers ограничен 50 для стабильности")
             return False, 50
@@ -202,7 +202,7 @@ def fetch_articles_enhanced(issn, from_date, until_date, use_cache=True, progres
     if not validate_issn(issn):
         print(f"Неверный формат ISSN: {issn}")
         return []
-
+    
     cache_key = get_cache_key("fetch_articles_enhanced", issn, from_date, until_date)
     if use_cache:
         cached_data = load_from_cache(cache_key)
@@ -232,22 +232,39 @@ def fetch_articles_enhanced(issn, from_date, until_date, use_cache=True, progres
             resp.raise_for_status()
             data = resp.json()
             message = data['message']
+            
+            # УЛУЧШЕННАЯ ПРОВЕРКА: проверяем наличие статей и корректность данных
+            if 'items' not in message or not message['items']:
+                print(f"Crossref не вернул статьи для ISSN {issn} в периоде {from_date}–{until_date}")
+                break
+                
             filtered_items = []
             for item in message['items']:
                 item_type = item.get('type', '').lower()
                 print(f"Тип статьи: {item_type}, DOI: {item.get('DOI', 'N/A')}")
+                
+                # УЛУЧШЕННАЯ ФИЛЬТРАЦИЯ: более точная проверка типов
                 if item_type not in excluded_types:
-                    filtered_items.append(item)
+                    # ДОПОЛНИТЕЛЬНАЯ ПРОВЕРКА: убедимся, что есть необходимые поля
+                    if item.get('DOI') and item.get('published'):
+                        filtered_items.append(item)
+                    else:
+                        print(f"Пропущена статья без DOI или даты публикации: {item.get('title', ['N/A'])[0]}")
+                
             items.extend(filtered_items)
             print(f"fetch_articles_enhanced: Получено {len(filtered_items)} статей на странице {current_page + 1}")
+            
             cursor = message.get('next-cursor')
             current_page += 1
+            
             if progress_callback:
                 progress = min(0.3 * current_page / total_pages, 0.3)
                 progress_callback(progress)
+                
             if not cursor or len(message['items']) == 0:
                 print(f"fetch_articles_enhanced: Завершено, всего найдено {len(items)} статей")
                 break
+                
             time.sleep(0.5)
         except Exception as e:
             print(f"Ошибка в fetch_articles_enhanced для ISSN {issn}: {e}")
@@ -310,29 +327,42 @@ def fetch_citations_openalex(doi, citation_start_date, citation_end_date, update
                     citing_doi = work.get('doi', '').replace('https://doi.org/', '') if work.get('doi') else 'Нет DOI'
                     citing_title = work.get('title', 'Нет названия')
                     publication_date_str = work.get('publication_date', 'Нет даты')
+                    
+                    # УЛУЧШЕННАЯ ФИЛЬТРАЦИЯ ДАТ: более надежная обработка
                     if publication_date_str != 'Нет даты':
                         try:
+                            # Преобразуем строку даты в объект date
                             pub_date = datetime.strptime(publication_date_str, '%Y-%m-%d').date()
+                            
+                            # ПРОВЕРКА ДИАПАЗОНА ДАТ: убедимся, что даты корректны
                             if citation_start_date <= pub_date <= citation_end_date:
                                 citing_works.append({
                                     'DOI': citing_doi,
                                     'Название статьи': citing_title,
                                     'Дата публикации': publication_date_str
                                 })
-                        except ValueError:
-                            pass
+                            else:
+                                # Логируем отфильтрованные цитирования для отладки
+                                if page == 1 and len(citing_works) == 0:
+                                    print(f"DOI {doi}: Цитирование от {pub_date} вне периода {citation_start_date}-{citation_end_date}")
+                                    
+                        except ValueError as ve:
+                            print(f"DOI {doi}: Ошибка формата даты '{publication_date_str}': {ve}")
+                        except Exception as e:
+                            print(f"DOI {doi}: Ошибка обработки даты: {e}")
+                    
                     total_processed += 1
                 
                 next_cursor = data.get('meta', {}).get('next_cursor')
                 if not next_cursor:
-                    print(f"DOI {doi}: Достигнут конец списка")
+                    print(f"DOI {doi}: Достигнут конец списка, обработано {total_processed} цитирований")
                     break
                 
                 page += 1
                 if update_progress and cited_by_count > 0:
                     progress = min(1.0, total_processed / cited_by_count)
                     update_progress(progress)
-                time.sleep(0.2)
+                time.sleep(0.1)
                 
             except requests.exceptions.RequestException as e:
                 print(f"DOI {doi}: Ошибка при запросе страницы {page}: {e}")
@@ -343,6 +373,7 @@ def fetch_citations_openalex(doi, citation_start_date, citation_end_date, update
         
         count_period = len(citing_works)
         print(f"DOI {doi}: Цитирований в периоде {citation_start_date}–{citation_end_date}: {count_period} из {cited_by_count}")
+        
         result = {
             'doi': doi,
             'count': count_period,
@@ -518,7 +549,7 @@ def calculate_metrics_fast(issn, journal_name="Не указано", use_cache=T
         print(f"Ошибка в calculate_metrics_fast: {e}")
         return None
 
-def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cache=True, progress_callback=None, use_parallel=True, max_workers=5):
+def calculate_metrics_enhanced(issn, journal_name="Не указано", use_cache=True, progress_callback=None, use_parallel=True, max_workers=20):
     """УСОВЕРШЕНСТВОВАННАЯ функция для расчета метрик с OpenAlex для ИФ"""
     try:
         print(f"Запуск calculate_metrics_enhanced для ISSN {issn}")
@@ -763,6 +794,15 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         cs_article_start = current_date - timedelta(days=52*30)
         cs_article_end = current_date - timedelta(days=4*30)
 
+        # УЛУЧШЕННАЯ ПРОВЕРКА ФОРМАТА ДАТ
+        print(f"=== ПАРАМЕТРЫ ДИНАМИЧЕСКОГО АНАЛИЗА ===")
+        print(f"ISSN: {issn}")
+        print(f"ИФ - Период статей: {if_article_start} до {if_article_end}")
+        print(f"ИФ - Период цитирований: {if_citation_start} до {if_citation_end}")
+        print(f"CiteScore - Период статей: {cs_article_start} до {cs_article_end}")
+        print(f"CiteScore - Период цитирований: {cs_citation_start} до {cs_citation_end}")
+        print(f"======================================")
+
         # Получение статей для ИФ
         if_items = fetch_articles_enhanced(
             issn,
@@ -785,6 +825,16 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         B_cs = len(cs_items)
         print(f"Статьи для ИФ ({if_article_start}–{if_article_end}): {B_if}")
         print(f"Статьи для CiteScore ({cs_article_start}–{cs_article_end}): {B_cs}")
+        
+        # УЛУЧШЕННАЯ ПРОВЕРКА ДАННЫХ: более детальная диагностика
+        if B_if == 0:
+            print(f"❌ ВНИМАНИЕ: Нет статей для ИФ в указанном периоде")
+            print(f"   Проверьте параметры: ISSN={issn}, период={if_article_start} до {if_article_end}")
+            
+        if B_cs == 0:
+            print(f"❌ ВНИМАНИЕ: Нет статей для CiteScore в указанном периоде")
+            print(f"   Проверьте параметры: ISSN={issn}, период={cs_article_start} до {cs_article_end}")
+            
         if B_if == 0 or B_cs == 0:
             print(f"calculate_metrics_dynamic: Нет статей для анализа: IF={B_if}, CS={B_cs}")
             if progress_callback:
@@ -961,6 +1011,18 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         print(f"Цитирований Crossref для CiteScore: {A_cs_current_crossref}")
         print(f"Цитирований OpenAlex для CiteScore: {A_cs_current_openalex}")
 
+        # УЛУЧШЕННАЯ ПРОВЕРКА НЕСООТВЕТСТВИЯ ДАННЫХ
+        total_crossref_cites = sum(item['Цитирования (Crossref)'] for item in if_citation_data)
+        total_openalex_cites = sum(item['Цитирования (OpenAlex)'] for item in if_citation_data)
+        
+        print(f"=== СВОДКА ЦИТИРОВАНИЙ ===")
+        print(f"ИФ - Crossref цитирования: {total_crossref_cites}")
+        print(f"ИФ - OpenAlex цитирования: {total_openalex_cites}")
+        print(f"ИФ - Цитирования в периоде: {A_if_current}")
+        print(f"CiteScore - Crossref: {A_cs_current_crossref}")
+        print(f"CiteScore - OpenAlex: {A_cs_current_openalex}")
+        print(f"==========================")
+
         # Расчет ДВУХ значений CiteScore
         current_if = A_if_current / B_if if B_if > 0 else 0
         current_citescore_crossref = A_cs_current_crossref / B_cs if B_cs > 0 else 0
@@ -1001,7 +1063,13 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             'journal_name': journal_name,
             'citation_model_data': [],
             'parallel_processing': use_parallel,
-            'parallel_workers': effective_workers
+            'parallel_workers': effective_workers,
+            # ДОПОЛНИТЕЛЬНЫЕ ДИАГНОСТИЧЕСКИЕ ДАННЫЕ
+            'diagnostics': {
+                'crossref_openalex_discrepancy': abs(total_crossref_cites - total_openalex_cites),
+                'articles_with_citations': len([item for item in if_citation_data if item['Цитирования в периоде'] > 0]),
+                'valid_dois_ratio': valid_dois_if / B_if if B_if > 0 else 0
+            }
         }
 
     except Exception as e:
