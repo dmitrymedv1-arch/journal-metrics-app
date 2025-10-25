@@ -136,6 +136,13 @@ st.markdown("""<style>
         font-size: 0.9rem;
         margin: 0.2rem 0;
     }
+    .citescore-comparison {
+        background-color: #fff3e0;
+        padding: 1rem;
+        border-radius: 8px;
+        margin: 1rem 0;
+        border-left: 4px solid #ff9800;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -173,7 +180,9 @@ def main():
          **Динамический анализ (Dynamic Analysis)**
         - Время выполнения: 2-5 минут
         - ИФ: цитирования за последние 18–6 месяцев на статьи за 42–18 месяцев назад (OpenAlex)
-        - CiteScore: цитирования за 52–4 месяца назад на статьи за 52–4 месяца назад (Crossref)
+        - **Два значения CiteScore**: 
+          - CiteScore (Crossref): по данным Crossref
+          - CiteScore (OpenAlex): по данным OpenAlex
         - Имитирует логику объявления ИФ и CiteScore в конце июня (задерка 6 месяцев) и начале мая (задержка 4 месяца), соответственно, относительно предыдущего периода
         - **Параллельные запросы OpenAlex** для ускорения
         - Без прогнозов, текущие метрики
@@ -182,6 +191,7 @@ def main():
         - Автоматическое определение названия журнала по ISSN
         - Параллельная обработка цитирований (ускорение до 5x)
         - Колонка с датой публикации в таблице детального анализа
+        - **Два значения CiteScore в динамическом режиме** для сравнения данных Crossref и OpenAlex
         
         ©Chimica Techno Acta, https://chimicatechnoacta.ru / ©developed by daM
         """)
@@ -457,19 +467,77 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
     st.markdown('<h3 class="section-header"> CiteScore</h3>', unsafe_allow_html=True)
 
     if is_dynamic_mode:
+        # Для динамического режима показываем два значения CiteScore
+        st.markdown('<div class="citescore-comparison">', unsafe_allow_html=True)
+        st.markdown("**Сравнение CiteScore по разным источникам:**")
+        
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.metric("CiteScore", f"{result['current_citescore_crossref']:.2f}")
+            st.metric(
+                "CiteScore (Crossref)", 
+                f"{result['current_citescore_crossref']:.2f}",
+                help="Рассчитан на основе данных Crossref"
+            )
         
         with col2:
-            st.metric("Статьи для расчета", f"{result['total_articles_cs']}",
-                     help=f"Статьи за {result['cs_publication_period'][0]}–{result['cs_publication_period'][1]}")
+            st.metric(
+                "CiteScore (OpenAlex)", 
+                f"{result['current_citescore_openalex']:.2f}",
+                help="Рассчитан на основе данных OpenAlex"
+            )
         
         with col3:
-            st.metric("Цитирований", f"{result['total_cites_cs_crossref']}",
-                     help=f"Цитирования за {result['cs_citation_period'][0]}–{result['cs_citation_period'][1]}")
+            # Показываем разницу между двумя значениями
+            difference = result['current_citescore_openalex'] - result['current_citescore_crossref']
+            st.metric(
+                "Разница", 
+                f"{difference:+.2f}",
+                help="Разница между OpenAlex и Crossref"
+            )
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # Дополнительная информация о статьях и цитированиях
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric(
+                "Статьи для расчета", 
+                f"{result['total_articles_cs']}",
+                help=f"Статьи за {result['cs_publication_period'][0]}–{result['cs_publication_period'][1]}"
+            )
+        
+        with col2:
+            st.metric(
+                "Цитирований (Crossref)", 
+                f"{result['total_cites_cs_crossref']}",
+                help=f"Цитирования Crossref за {result['cs_citation_period'][0]}–{result['cs_citation_period'][1]}"
+            )
+        
+        # Отдельно показываем цитирования OpenAlex
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric(
+                "Цитирований (OpenAlex)", 
+                f"{result['total_cites_cs_openalex']}",
+                help=f"Цитирования OpenAlex за {result['cs_citation_period'][0]}–{result['cs_citation_period'][1]}"
+            )
+        
+        with col2:
+            if result['total_cites_cs_crossref'] > 0:
+                coverage_rate = result['total_cites_cs_openalex'] / result['total_cites_cs_crossref']
+                st.metric(
+                    "Покрытие OpenAlex", 
+                    f"{coverage_rate:.1%}",
+                    help="Отношение цитирований OpenAlex к Crossref"
+                )
+            else:
+                st.metric("Покрытие OpenAlex", "N/A")
+                
     else:
+        # Для быстрого и точного режимов - стандартное отображение
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -620,9 +688,6 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
             st.write(f"**ИФ - Период цитирований**: {result['if_citation_period'][0]} – {result['if_citation_period'][1]}")
             st.write(f"**CiteScore - Период публикаций**: {result['cs_publication_period'][0]} – {result['cs_publication_period'][1]}")
             st.write(f"**CiteScore - Период цитирований**: {result['cs_citation_period'][0]} – {result['cs_citation_period'][1]}")
-        else:
-            st.write(f"**ИФ - Годы публикаций**: {', '.join(map(str, result['if_publication_years']))}")
-            st.write(f"**CiteScore - Годы публикаций**: {', '.join(map(str, result['cs_publication_years']))}")
 
     if not is_dynamic_mode and 'multipliers' in result:
         st.markdown("#### Множители прогнозирования")
@@ -643,5 +708,3 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
-
-
