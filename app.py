@@ -531,7 +531,6 @@ def display_detailed_analysis(result, is_dynamic_mode):
             # Для динамического режима убираем только колонку "Цитирования в периоде"
             if is_dynamic_mode:
                 cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)']]
-                st.info("ℹ️ **Примечание:** В динамическом режиме колонка 'Цитирования в периоде' удалена как избыточная. 'Цитирования (OpenAlex)' показывают реальные общие цитирования статей.")
             else:  # Это точный режим
                 cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде']]
             
@@ -644,4 +643,5 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
+
 
