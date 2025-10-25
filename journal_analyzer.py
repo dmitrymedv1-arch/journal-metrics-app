@@ -772,8 +772,13 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
     if_citation_data = cs_citation_data = []
     current_if = current_citescore_crossref = current_citescore_openalex = 0.0
     A_if_current = A_cs_current_crossref = A_cs_current_openalex = 0
+    total_cites_if = total_cites_cs_crossref = total_cites_cs_openalex = 0
+    total_articles_if = total_articles_cs = 0
+    total_self_citations = 0
     valid_dois_if = 0
     seasonal_coefficients = get_seasonal_coefficients("general")
+    parallel_processing = False
+    parallel_workers = 1
     
     try:
         print(f"Запуск calculate_metrics_dynamic для ISSN {issn}")
@@ -784,8 +789,10 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         parallel_ok, effective_workers = validate_parallel_openalex(max_workers)
         if use_parallel and parallel_ok:
             print(f" Параллелизация включена: {effective_workers} потоков")
+            parallel_processing = True
+            parallel_workers = effective_workers
         else:
-            use_parallel = False
+            parallel_processing = False
             print(" Параллелизация отключена")
 
         journal_field = detect_journal_field(issn, journal_name)
@@ -835,6 +842,9 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
 
         B_if = len(if_items)
         B_cs = len(cs_items)
+        total_articles_if = B_if
+        total_articles_cs = B_cs
+        
         print(f"Статьи для ИФ ({if_article_start}–{if_article_end}): {B_if}")
         print(f"Статьи для CiteScore ({cs_article_start}–{cs_article_end}): {B_cs}")
         
@@ -861,14 +871,21 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                 'if_citation_period': [if_citation_start, if_citation_end],
                 'cs_publication_period': [cs_article_start, cs_article_end],
                 'cs_citation_period': [cs_citation_start, cs_citation_end],
-                'total_articles_if': B_if,
-                'total_articles_cs': B_cs,
-                'current_if': 0.0,
-                'current_citescore_crossref': 0.0,
-                'current_citescore_openalex': 0.0,
-                'if_citation_data': [],
-                'cs_citation_data': [],
+                'total_articles_if': total_articles_if,
+                'total_articles_cs': total_articles_cs,
+                'total_cites_if': total_cites_if,
+                'total_cites_cs_crossref': total_cites_cs_crossref,
+                'total_cites_cs_openalex': total_cites_cs_openalex,
+                'current_if': current_if,
+                'current_citescore_crossref': current_citescore_crossref,
+                'current_citescore_openalex': current_citescore_openalex,
+                'if_citation_data': if_citation_data,
+                'cs_citation_data': cs_citation_data,
                 'journal_field': journal_field,
+                'self_citation_rate': 0.05,
+                'total_self_citations': total_self_citations,
+                'parallel_processing': parallel_processing,
+                'parallel_workers': parallel_workers,
                 'diagnostics': {
                     'if_articles_sample': if_items[:5] if if_items else [],
                     'cs_articles_sample': cs_items[:5] if cs_items else [],
@@ -916,13 +933,13 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         
         dois_if = [item.get('DOI') for item in if_items if item.get('DOI') != 'N/A']
         
-        if use_parallel and dois_if:
+        if parallel_processing and dois_if:
             print(f" Параллельный анализ {len(dois_if)} DOI для ИФ...")
             parallel_results_if = parallel_fetch_citations_openalex(
                 dois_if,
                 if_citation_start,
                 if_citation_end,
-                effective_workers,
+                parallel_workers,
                 lambda p: progress_callback(0.3 + 0.2 * p)
             )
             
@@ -1000,13 +1017,13 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         # Получаем реальные цитирования OpenAlex для расчета второго значения CiteScore
         dois_cs = [item.get('DOI') for item in cs_items if item.get('DOI') != 'N/A']
         
-        if use_parallel and dois_cs:
+        if parallel_processing and dois_cs:
             print(f" Параллельный анализ {len(dois_cs)} DOI для получения цитирований OpenAlex для CiteScore...")
             parallel_results_cs = parallel_fetch_citations_openalex(
                 dois_cs,
                 cs_citation_start,
                 cs_citation_end,
-                effective_workers,
+                parallel_workers,
                 lambda p: progress_callback(0.5 + 0.4 * p)
             )
             
@@ -1092,6 +1109,12 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         current_citescore_crossref = A_cs_current_crossref / B_cs if B_cs > 0 else 0
         current_citescore_openalex = A_cs_current_openalex / B_cs if B_cs > 0 else 0
 
+        # Обновляем итоговые переменные
+        total_cites_if = A_if_current
+        total_cites_cs_crossref = A_cs_current_crossref
+        total_cites_cs_openalex = A_cs_current_openalex
+        total_self_citations = int(A_if_current * 0.05)
+
         if progress_callback:
             progress_callback(0.9)
             print("Расчет метрик...")
@@ -1106,11 +1129,11 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             'current_if': current_if,
             'current_citescore_crossref': current_citescore_crossref,
             'current_citescore_openalex': current_citescore_openalex,
-            'total_cites_if': A_if_current,
-            'total_articles_if': B_if,
-            'total_cites_cs_crossref': A_cs_current_crossref,
-            'total_cites_cs_openalex': A_cs_current_openalex,
-            'total_articles_cs': B_cs,
+            'total_cites_if': total_cites_if,
+            'total_articles_if': total_articles_if,
+            'total_cites_cs_crossref': total_cites_cs_crossref,
+            'total_cites_cs_openalex': total_cites_cs_openalex,
+            'total_articles_cs': total_articles_cs,
             'citation_distribution': dict(seasonal_coefficients),
             'if_citation_data': if_citation_data,
             'cs_citation_data': cs_citation_data,
@@ -1122,12 +1145,12 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             'seasonal_coefficients': seasonal_coefficients,
             'journal_field': journal_field,
             'self_citation_rate': 0.05,
-            'total_self_citations': int(A_if_current * 0.05),
+            'total_self_citations': total_self_citations,
             'issn': issn,
             'journal_name': journal_name,
             'citation_model_data': [],
-            'parallel_processing': use_parallel,
-            'parallel_workers': effective_workers,
+            'parallel_processing': parallel_processing,
+            'parallel_workers': parallel_workers,
             # ДОПОЛНИТЕЛЬНЫЕ ДИАГНОСТИЧЕСКИЕ ДАННЫЕ
             'diagnostics': {
                 'crossref_openalex_discrepancy': abs(total_crossref_cites - total_openalex_cites),
@@ -1152,14 +1175,21 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             'if_citation_period': [if_citation_start, if_citation_end] if if_citation_start else [],
             'cs_publication_period': [cs_article_start, cs_article_end] if cs_article_start else [],
             'cs_citation_period': [cs_citation_start, cs_citation_end] if cs_citation_start else [],
-            'total_articles_if': B_if,
-            'total_articles_cs': B_cs,
+            'total_articles_if': total_articles_if,
+            'total_articles_cs': total_articles_cs,
+            'total_cites_if': total_cites_if,
+            'total_cites_cs_crossref': total_cites_cs_crossref,
+            'total_cites_cs_openalex': total_cites_cs_openalex,
             'current_if': current_if,
             'current_citescore_crossref': current_citescore_crossref,
             'current_citescore_openalex': current_citescore_openalex,
             'if_citation_data': if_citation_data,
             'cs_citation_data': cs_citation_data,
             'journal_field': journal_field,
+            'self_citation_rate': 0.05,
+            'total_self_citations': total_self_citations,
+            'parallel_processing': parallel_processing,
+            'parallel_workers': parallel_workers,
             'diagnostics': {
                 'if_articles_count': len(if_items),
                 'cs_articles_count': len(cs_items),
