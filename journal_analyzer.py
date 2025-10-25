@@ -961,8 +961,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         print(f"Обработано DOI для CiteScore: {valid_dois_cs}/{B_cs}")
 
         current_if = A_if_current / B_if if B_if > 0 else 0
-        total_openalex_citations = sum(item.get('Цитирования (OpenAlex)', 0) for item in cs_citation_data)
-        current_citescore_openalex = total_openalex_citations / B_cs if B_cs > 0 else 0
+        current_citescore_openalex = A_cs_current_openalex / B_cs if B_cs > 0 else 0
         current_citescore_crossref = A_cs_current_crossref / B_cs if B_cs > 0 else 0
 
         if progress_callback:
@@ -981,7 +980,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
             'current_citescore_crossref': current_citescore_crossref,
             'total_cites_if': A_if_current,
             'total_articles_if': B_if,
-            'total_cites_cs_openalex': total_openalex_citations,
+            'total_cites_cs_openalex': A_cs_current_openalex,
             'total_cites_cs_crossref': A_cs_current_crossref,
             'total_articles_cs': B_cs,
             'citation_distribution': dict(seasonal_coefficients),
@@ -1028,4 +1027,3 @@ def on_clear_cache_clicked(b):
     except Exception as e:
         print(f"Ошибка при очистке кэша: {e}")
         return f"Ошибка при очистке кэша: {e}"
-
