@@ -757,7 +757,7 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         if_article_start = current_date - timedelta(days=42*30)
         if_article_end = current_date - timedelta(days=18*30)
 
-        # Периоды для CiteScore (2021–2025 для корректного учета статей)
+        # Периоды для CiteScore
         cs_citation_start = current_date - timedelta(days=52*30)
         cs_citation_end = current_date - timedelta(days=4*30)
         cs_article_start = current_date - timedelta(days=52*30)
@@ -876,7 +876,10 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         print(f"Обработано DOI для ИФ: {valid_dois_if}/{B_if}")
 
         # Расчет ДВУХ значений CiteScore: Crossref и OpenAlex
+        # Для Crossref используем стандартные данные Crossref
         A_cs_current_crossref = sum(item.get('is-referenced-by-count', 0) for item in cs_items)
+        
+        # Для OpenAlex используем ВСЕ цитирования (total_count), а не только в периоде
         A_cs_current_openalex = 0
         cs_citation_data = []
         
@@ -901,14 +904,15 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                 
                 if doi != 'N/A' and doi in parallel_results_cs:
                     result = parallel_results_cs[doi]
-                    A_cs_current_openalex += result['count']  # Суммируем цитирования в периоде для OpenAlex
+                    # ИСПРАВЛЕНИЕ: используем total_count (все цитирования) вместо count (только в периоде)
+                    A_cs_current_openalex += result['total_count']
                     cs_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
                         'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
-                        'Цитирования (OpenAlex)': result['total_count'],  # Реальные значения OpenAlex
-                        'Цитирования в периоде': result['count']  # Сохраняем для возможного анализа
+                        'Цитирования (OpenAlex)': result['total_count'],
+                        'Цитирования в периоде': result['count']
                     })
                 else:
                     cs_citation_data.append({
@@ -933,14 +937,15 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
                         cs_citation_end,
                         lambda p: progress_callback(0.5 + 0.4 * (i + 1) / B_cs * p) if progress_callback else None
                     )
-                    A_cs_current_openalex += result['count']  # Суммируем цитирования в периоде для OpenAlex
+                    # ИСПРАВЛЕНИЕ: используем total_count (все цитирования) вместо count (только в периоде)
+                    A_cs_current_openalex += result['total_count']
                     cs_citation_data.append({
                         'DOI': doi,
                         'Год публикации': item.get('published', {}).get('date-parts', [[None]])[0][0],
                         'Дата публикации': pub_date,
                         'Цитирования (Crossref)': crossref_cites,
-                        'Цитирования (OpenAlex)': result['total_count'],  # Реальные значения OpenAlex
-                        'Цитирования в периоде': result['count']  # Сохраняем для возможного анализа
+                        'Цитирования (OpenAlex)': result['total_count'],
+                        'Цитирования в периоде': result['count']
                     })
                 else:
                     cs_citation_data.append({
