@@ -260,7 +260,7 @@ def fetch_articles_enhanced(issn, from_date, until_date, use_cache=True, progres
                 print(f"fetch_articles_enhanced: Завершено, всего найдено {len(items)} статей")
                 break
                 
-            time.sleep(0.5)
+            time.sleep(0.6)
         except Exception as e:
             print(f"Ошибка в fetch_articles_enhanced для ISSN {issn}: {e}")
             break
@@ -357,7 +357,7 @@ def fetch_citations_openalex(doi, citation_start_date, citation_end_date, update
                 if update_progress and cited_by_count > 0:
                     progress = min(1.0, total_processed / cited_by_count)
                     update_progress(progress)
-                time.sleep(0.3)
+                time.sleep(0.6)
                 
             except requests.exceptions.RequestException as e:
                 print(f"DOI {doi}: Ошибка при запросе страницы {page}: {e}")
@@ -1348,4 +1348,5 @@ def on_clear_cache_clicked(b):
     except Exception as e:
         print(f"Ошибка при очистке кэша: {e}")
         return f"Ошибка при очистке кэша: {e}"
+
 
