@@ -1,7 +1,3 @@
-# Количество строк: ~415
-# Изменения:
-# +15 строк: обновление display_main_metrics для двух CiteScore и display_detailed_analysis для новой колонки
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -178,7 +174,7 @@ def main():
         🌐 **Динамический анализ (Dynamic Analysis)**
         - Время выполнения: 2-5 минут
         - ИФ: цитирования за последние 18–6 месяцев на статьи за 42–18 месяцев назад (OpenAlex)
-        - CiteScore: цитирования за 52–4 месяца назад на статьи за 52–4 месяца назад (OpenAlex и Crossref)
+        - CiteScore: цитирования за 52–4 месяца назад на статьи за 52–4 месяца назад (Crossref)
         - Имитирует логику объявления ИФ и CiteScore в конце июня (задерка 6 месяцев) и начале мая (задержка 4 месяца), соответственно, относительно предыдущего периода
         - **Параллельные запросы OpenAlex** для ускорения
         - Без прогнозов, текущие метрики
@@ -186,7 +182,6 @@ def main():
         **🆕 Новые возможности:**
         - Автоматическое определение названия журнала по ISSN
         - Параллельная обработка цитирований (ускорение до 5x)
-        - Два значения CiteScore в динамическом режиме (OpenAlex и Crossref)
         - Колонка с датой публикации в таблице детального анализа
         
         ©Chimica Techno Acta, https://chimicatechnoacta.ru / ©developed by daM
@@ -296,7 +291,7 @@ def main():
             
             Выполняются:
             - Сбор статей через Crossref
-            - **Параллельный** анализ цитирований через OpenAlex для ИФ и CiteScore
+            - **Параллельный** анализ цитирований через OpenAlex для ИФ
             - Расчет метрик
             """)
         
@@ -446,36 +441,21 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
     
     st.markdown('<h3 class="section-header">📊 CiteScore</h3>', unsafe_allow_html=True)
     
-    if is_dynamic_mode:
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.metric("CiteScore (OpenAlex)", f"{result['current_citescore_openalex']:.2f}")
-        
-        with col2:
-            st.metric("CiteScore (Crossref)", f"{result['current_citescore_crossref']:.2f}")
-        
-        with col3:
-            st.metric("Статьи для расчета", f"{result['total_articles_cs']}",
-                     help=f"Статьи за {result['cs_publication_period'][0]}–{result['cs_publication_period'][1]}")
-        
-        with col4:
-            st.metric("Цитирований", f"O: {result['total_cites_cs_openalex']} | C: {result['total_cites_cs_crossref']}",
-                     help=f"Цитирования за {result['cs_citation_period'][0]}–{result['cs_citation_period'][1]}")
-    else:
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            st.metric("Текущий CiteScore", f"{result['current_citescore']:.2f}")
-        
-        with col2:
-            st.metric("Статьи для расчета", f"{result['total_articles_cs']}",
-                     help=f"Статьи за {result['cs_publication_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_publication_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
-        
-        with col3:
-            st.metric("Цитирований", f"{result['total_cites_cs']}",
-                     help=f"Цитирования за {result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
+    col1, col2, col3 = st.columns(3)
     
+    with col1:
+        st.metric("Текущий CiteScore", f"{result['current_citescore']:.2f}")
+    
+    with col2:
+        st.metric("Статьи для расчета", f"{result['total_articles_cs']}",
+                 help=f"Статьи за {result['cs_publication_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_publication_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
+    
+    with col3:
+        st.metric("Цитирований", f"{result['total_cites_cs']}",
+                 help=f"Цитирования заaveraged
+
+System: за {result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
+
     if is_precise_mode and not is_dynamic_mode:
         st.markdown("#### Прогнозы CiteScore на конец 2025")
         forecast_col1, forecast_col2, forecast_col3 = st.columns(3)
@@ -625,6 +605,3 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
-
-
-
