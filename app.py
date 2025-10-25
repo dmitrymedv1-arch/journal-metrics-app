@@ -222,9 +222,9 @@ def main():
         
         max_workers = st.slider(
             "Количество параллельных потоков:",
-            min_value=5,
-            max_value=50,
-            value=20,
+            min_value=3,
+            max_value=20,
+            value=5,
             help="Больше потоков = быстрее, но выше нагрузка на API"
         )
         
@@ -624,6 +624,7 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
+
 
 
 
