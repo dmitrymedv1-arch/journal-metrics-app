@@ -58,14 +58,14 @@ st.set_page_config(
 st.markdown("""
 <style>
     .main-header {
-        font-size: 2.0rem;
+        font-size: 2.5rem;
         color: #1E88E5;
         text-align: center;
         margin-bottom: 2rem;
     }
     .metric-card {
         background-color: #f8f9fa;
-        padding: 1.3rem;
+        padding: 1.5rem;
         border-radius: 10px;
         border-left: 4px solid #1E88E5;
         margin-bottom: 1rem;
@@ -141,9 +141,6 @@ st.markdown("""
         font-size: 0.9rem;
         margin: 0.2rem 0;
     }
-    .markdown-text-container p, .markdown-text-container li {
-        line-height: 1.0 !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -173,16 +170,15 @@ def main():
         🎯 **Точный анализ (Precise Analysis)** 
         - Время выполнения: 2-5 минут
         - CiteScore через Crossref
-        - Импакт-Фактор через OpenAlex (цитирования текущего года)
+        - Импакт-Фактор через OpenAlex (цитирования 2025 года)
         - **Параллельные запросы OpenAlex** для ускорения
         - Полный анализ самоцитирований
         - Рекомендуется для финальной оценки
         
         🌐 **Динамический анализ (Dynamic Analysis)**
         - Время выполнения: 2-5 минут
-        - Imact Factor: цитирования за последние 18–6 месяцев на статьи за 42–18 месяцев назад (OpenAlex)
-        - CiteScore: цитирования за 52–4 месяца назад на статьи за за 52–4 месяцев назад (OpenAlex и Crossref)
-        - Imact Factor и CiteScore в динамическом анализе на текущую дату проведения анализа имитируют логику объявления оффициальных показателей в конце июня (для IF) и начале мая (для SC) за предыдущий анализируемый период.
+        - ИФ: цитирования за последние 18–6 месяцев на статьи за 42–18 месяцев назад (OpenAlex)
+        - CiteScore: цитирования за 52–4 месяца назад на статьи за 2021–2025 (OpenAlex и Crossref)
         - **Параллельные запросы OpenAlex** для ускорения
         - Без прогнозов, текущие метрики
         
@@ -226,9 +222,9 @@ def main():
         
         max_workers = st.slider(
             "Количество параллельных потоков:",
-            min_value=3,
-            max_value=20,
-            value=5,
+            min_value=5,
+            max_value=50,
+            value=20,
             help="Больше потоков = быстрее, но выше нагрузка на API"
         )
         
@@ -420,17 +416,14 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
         )
     
     with col3:
-        current_year = result['analysis_date'].year
-        citation_period_start = result['if_citation_period'][0] if is_dynamic_mode else current_year
-        citation_period_end = result['if_citation_period'][1] if is_dynamic_mode else current_year
         st.metric(
             "Цитирований", 
             f"{result['total_cites_if']}",
-            help=f"Цитирования за {citation_period_start}–{citation_period_end}"
+            help=f"Цитирования за {result['if_citation_period' if is_dynamic_mode else 'if_publication_years'][0]}–{result['if_citation_period' if is_dynamic_mode else 'if_publication_years'][1]}"
         )
     
     if is_precise_mode and not is_dynamic_mode:
-        st.markdown("#### Прогнозы Импакт-Фактора на конец текущего года")
+        st.markdown("#### Прогнозы Импакт-Фактора на конец 2025")
         forecast_col1, forecast_col2, forecast_col3 = st.columns(3)
         
         with forecast_col1:
@@ -483,7 +476,7 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
                      help=f"Цитирования за {result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][0]}–{result['cs_citation_period' if is_dynamic_mode else 'cs_publication_years'][-1]}")
     
     if is_precise_mode and not is_dynamic_mode:
-        st.markdown("#### Прогнозы CiteScore на конец текущего года")
+        st.markdown("#### Прогнозы CiteScore на конец 2025")
         forecast_col1, forecast_col2, forecast_col3 = st.columns(3)
         
         with forecast_col1:
@@ -519,7 +512,7 @@ def display_detailed_analysis(result):
         if result['cs_citation_data']:
             st.markdown("#### Для CiteScore")
             cs_data = pd.DataFrame(result['cs_citation_data'])
-            cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде', 'Цитирования после периода']]
+            cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде']]
             st.dataframe(cs_data, use_container_width=True)
         else:
             st.info("Нет данных о цитированиях для CiteScore")
@@ -631,13 +624,6 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
 
 
 
