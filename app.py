@@ -1,7 +1,3 @@
-# Количество строк: ~415
-# Изменения:
-# +15 строк: обновление display_main_metrics для двух CiteScore и display_detailed_analysis для новой колонки
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -648,3 +644,4 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
+
