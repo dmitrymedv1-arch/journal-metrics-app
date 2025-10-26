@@ -264,10 +264,10 @@ def get_citing_count_openalex_batch(dois):
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            with ThreadPoolExecutor(max_workers=5) as executor:
                 future_to_doi = {executor.submit(get_single_openalex_count, doi): doi for doi in dois}
                 results = {}
-                for future in concurrent.futures.as_completed(future_to_doi):
+                for future in as_completed(future_to_doi):
                     doi, count = future.result()
                     results[doi] = count
                 return results
@@ -916,51 +916,100 @@ def calculate_metrics_dynamic(issn, journal_name="Не указано", use_cach
         # Создаем таблицу для отображения
         def create_table_row(idx, article):
             return [
-                idx, article['doi'], article['pub_date'], 
-                article['crossref_cites'], article['openalex_cites']
+                idx + 1, 
+                article['doi'], 
+                article['pub_date'], 
+                article['crossref_cites'], 
+                article['openalex_cites']
             ]
         
         with ThreadPoolExecutor(max_workers=5) as executor:
             table_data = list(executor.map(
-                lambda x: create_table_row(x[0] + 1, x[1]), 
+                lambda x: create_table_row(x[0], x[1]), 
                 enumerate(processed_articles)
             ))
         
         articles_df = pd.DataFrame(table_data, columns=['№', 'DOI', 'Publication Date', 'Crossref Citations', 'OpenAlex Citations'])
 
-        return {
+        # Создаем корректный результат со всеми необходимыми полями
+        result = {
+            # Основные метрики из динамического анализа
             'citescore_crossref': metrics['citescore_crossref'],
             'citescore_openalex': metrics['citescore_openalex'],
             'citescore_diff': metrics['citescore_diff'],
             'impact_factor_crossref': metrics['impact_factor_crossref'],
             'impact_factor_openalex': metrics['impact_factor_openalex'],
             'impact_factor_diff': metrics['impact_factor_diff'],
+            
+            # Статистические данные
             'total_articles': metrics['total_articles'],
             'if_denominator': metrics['if_denominator'],
             'total_crossref_citations': metrics['total_crossref_citations'],
             'total_openalex_citations': metrics['total_openalex_citations'],
             'if_crossref_numerator': metrics['if_crossref_numerator'],
             'if_openalex_numerator': metrics['if_openalex_numerator'],
+            
+            # Данные для отображения
             'articles_data': processed_articles,
             'articles_df': articles_df,
+            
+            # Общая информация
             'analysis_date': current_date.strftime('%Y-%m-%d %H:%M:%S'),
             'journal_field': journal_field,
             'self_citation_rate': 0.05,
             'total_self_citations': int(metrics['total_crossref_citations'] * 0.05),
             'issn': issn,
             'journal_name': journal_name,
+            
+            # Информация о параллельной обработке
             'parallel_processing': use_parallel,
             'parallel_workers': max_workers,
+            
+            # Статистика производительности
             'total_requests': total_requests,
             'failed_requests': failed_requests,
             'success_rate': success_rate,
             'processing_speed': processing_speed,
             'analysis_time_seconds': total_time,
-            'analysis_time_formatted': f"{minutes} мин {seconds} сек"
+            'analysis_time_formatted': f"{minutes} мин {seconds} сек",
+            
+            # Поля для совместимости с другими режимами
+            'current_if': metrics['impact_factor_openalex'],  # Для совместимости
+            'current_citescore': metrics['citescore_openalex'],  # Для совместимости
+            'total_cites_if': metrics['if_openalex_numerator'],  # Для совместимости
+            'total_articles_if': metrics['if_denominator'],  # Для совместимости
+            'total_cites_cs': metrics['total_openalex_citations'],  # Для совместимости
+            'total_articles_cs': metrics['total_articles'],  # Для совместимости
+            
+            # Пустые поля для совместимости
+            'if_forecasts': {},
+            'citescore_forecasts': {},
+            'multipliers': {},
+            'citation_distribution': {},
+            'if_citation_data': [],
+            'cs_citation_data': [],
+            'if_publication_years': [],
+            'cs_publication_years': [],
+            'seasonal_coefficients': get_seasonal_coefficients(journal_field),
+            'citation_model_data': [],
+            
+            # Периоды для отображения
+            'if_publication_period': [from_date, until_date],
+            'if_citation_period': [current_date - timedelta(days=18*30), current_date - timedelta(days=6*30)],
+            'cs_publication_period': [from_date, until_date],
+            'cs_citation_period': [from_date, until_date]
         }
 
+        print(f"✅ Динамический анализ завершен успешно")
+        print(f"📊 Результаты: IF Crossref={metrics['impact_factor_crossref']:.2f}, IF OpenAlex={metrics['impact_factor_openalex']:.2f}")
+        print(f"📊 Результаты: CS Crossref={metrics['citescore_crossref']:.2f}, CS OpenAlex={metrics['citescore_openalex']:.2f}")
+
+        return result
+
     except Exception as e:
-        print(f"Ошибка в calculate_metrics_dynamic для ISSN {issn}: {e}")
+        print(f"❌ Ошибка в calculate_metrics_dynamic для ISSN {issn}: {e}")
+        import traceback
+        traceback.print_exc()
         if progress_callback:
             progress_callback(1.0)
         return None
