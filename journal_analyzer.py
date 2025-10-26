@@ -390,104 +390,105 @@ def process_articles_parallel(articles_data):
 
 def calculate_metrics_parallel(articles_data, progress_callback=None):
     """Параллельный расчет метрик по методологии Colab"""
-    current_date = datetime.now()
-    
-    citation_period_start = current_date - timedelta(days=18*30)
-    citation_period_end = current_date - timedelta(days=6*30)
-    publication_period_start = current_date - timedelta(days=43*30)
-    publication_period_end = current_date - timedelta(days=19*30)
-    
-    print(f"📅 Период публикаций для IF: {publication_period_start.strftime('%Y-%m-%d')} - {publication_period_end.strftime('%Y-%m-%d')}")
-    
-    total_articles = len(articles_data)
-    
-    def sum_crossref_cites():
-        return sum(item['crossref_cites'] for item in articles_data)
-    
-    def sum_openalex_cites():
-        return sum(item['openalex_cites'] for item in articles_data)
-    
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        future_crossref = executor.submit(sum_crossref_cites)
-        future_openalex = executor.submit(sum_openalex_cites)
-        total_crossref_citations = future_crossref.result()
-        total_openalex_citations = future_openalex.result()
-    
-    citescore_crossref = total_crossref_citations / total_articles if total_articles > 0 else 0
-    citescore_openalex = total_openalex_citations / total_articles if total_articles > 0 else 0
-    citescore_diff = abs(citescore_crossref - citescore_openalex)
-    
-    articles_for_if = [article for article in articles_data 
-                      if (article['pub_date'] >= publication_period_start.strftime('%Y-%m-%d') and 
-                          article['pub_date'] <= publication_period_end.strftime('%Y-%m-%d'))]
-    
-    print(f"📊 Статей в знаменателе IF (43-19 мес): {len(articles_for_if)}")
-    
-    def process_article_for_if(article):
-        crossref_total_cites = article['crossref_cites']
+    try:
+        current_date = datetime.now()
         
-        crossref_cites_in_period = crossref_total_cites
+        citation_period_start = current_date - timedelta(days=18*30)
+        citation_period_end = current_date - timedelta(days=6*30)
+        publication_period_start = current_date - timedelta(days=43*30)
+        publication_period_end = current_date - timedelta(days=19*30)
         
-        openalex_cites_in_period = 0
-        if article['doi'] != 'N/A':
-            citing_articles = get_citing_articles_openalex_with_dates(article['doi'])
-            for citing_article in citing_articles:
-                cite_date = citing_article['date']
-                if (cite_date >= citation_period_start.strftime('%Y-%m-%d') and 
-                    cite_date <= citation_period_end.strftime('%Y-%m-%d')):
-                    openalex_cites_in_period += 1
+        print(f"📅 Период публикаций для IF: {publication_period_start.strftime('%Y-%m-%d')} - {publication_period_end.strftime('%Y-%m-%d')}")
         
-        return {
-            'crossref_in_period': crossref_cites_in_period,
-            'openalex_in_period': openalex_cites_in_period
-        }
-    
-    print("⏳ Параллельный расчет Impact Factor...")
-    
-    if_crossref_numerator = 0
-    if_openalex_numerator = 0
-    if_denominator = len(articles_for_if)
-    
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        future_to_article = {executor.submit(process_article_for_if, article): i 
-                           for i, article in enumerate(articles_for_if)}
+        total_articles = len(articles_data)
         
-        completed = 0
-        for future in as_completed(future_to_article):
-            result = future.result()
+        # Расчет CiteScore
+        total_crossref_citations = sum(item['crossref_cites'] for item in articles_data)
+        total_openalex_citations = sum(item['openalex_cites'] for item in articles_data)
+        
+        citescore_crossref = total_crossref_citations / total_articles if total_articles > 0 else 0
+        citescore_openalex = total_openalex_citations / total_articles if total_articles > 0 else 0
+        citescore_diff = abs(citescore_crossref - citescore_openalex)
+        
+        # Фильтрация статей для Impact Factor
+        articles_for_if = [
+            article for article in articles_data 
+            if (article['pub_date'] >= publication_period_start.strftime('%Y-%m-%d') and 
+                article['pub_date'] <= publication_period_end.strftime('%Y-%m-%d'))
+        ]
+        
+        print(f"📊 Статей в знаменателе IF (43-19 мес): {len(articles_for_if)}")
+        
+        # Расчет Impact Factor
+        if_crossref_numerator = 0
+        if_openalex_numerator = 0
+        if_denominator = len(articles_for_if)
+        
+        print("⏳ Расчет Impact Factor...")
+        
+        for i, article in enumerate(articles_for_if):
+            # Crossref: используем все цитирования
+            crossref_cites_in_period = article['crossref_cites']
+            if_crossref_numerator += crossref_cites_in_period
             
-            if_crossref_numerator += result['crossref_in_period']
-            if_openalex_numerator += result['openalex_in_period']
+            # OpenAlex: считаем только цитирования в периоде 18-6 месяцев назад
+            openalex_cites_in_period = 0
+            if article['doi'] != 'N/A':
+                citing_articles = get_citing_articles_openalex_with_dates(article['doi'])
+                for citing_article in citing_articles:
+                    cite_date = citing_article['date']
+                    if (cite_date >= citation_period_start.strftime('%Y-%m-%d') and 
+                        cite_date <= citation_period_end.strftime('%Y-%m-%d')):
+                        openalex_cites_in_period += 1
             
-            completed += 1
+            if_openalex_numerator += openalex_cites_in_period
             
-            if progress_callback and completed % 5 == 0:
-                progress = 0.7 + 0.3 * (completed / len(articles_for_if))
+            if progress_callback and i % 5 == 0:
+                progress = 0.7 + 0.3 * (i / len(articles_for_if))
                 progress_callback(progress)
             
-            if completed % 5 == 0 or completed == len(articles_for_if):
-                current_if_crossref = if_crossref_numerator / if_denominator if if_denominator > 0 else 0
-                current_if_openalex = if_openalex_numerator / if_denominator if if_denominator > 0 else 0
-                print(f"Обработано для IF: {completed}/{len(articles_for_if)} статей")
-    
-    impact_factor_crossref = if_crossref_numerator / if_denominator if if_denominator > 0 else 0
-    impact_factor_openalex = if_openalex_numerator / if_denominator if if_denominator > 0 else 0
-    impact_factor_diff = abs(impact_factor_crossref - impact_factor_openalex)
-    
-    return {
-        'citescore_crossref': citescore_crossref,
-        'citescore_openalex': citescore_openalex,
-        'citescore_diff': citescore_diff,
-        'impact_factor_crossref': impact_factor_crossref,
-        'impact_factor_openalex': impact_factor_openalex,
-        'impact_factor_diff': impact_factor_diff,
-        'total_articles': total_articles,
-        'if_denominator': if_denominator,
-        'total_crossref_citations': total_crossref_citations,
-        'total_openalex_citations': total_openalex_citations,
-        'if_crossref_numerator': if_crossref_numerator,
-        'if_openalex_numerator': if_openalex_numerator
-    }
+            if i % 10 == 0 or i == len(articles_for_if) - 1:
+                print(f"Обработано для IF: {i+1}/{len(articles_for_if)} статей")
+        
+        impact_factor_crossref = if_crossref_numerator / if_denominator if if_denominator > 0 else 0
+        impact_factor_openalex = if_openalex_numerator / if_denominator if if_denominator > 0 else 0
+        impact_factor_diff = abs(impact_factor_crossref - impact_factor_openalex)
+        
+        # Возвращаем ВСЕ необходимые поля
+        return {
+            'citescore_crossref': citescore_crossref,
+            'citescore_openalex': citescore_openalex,
+            'citescore_diff': citescore_diff,
+            'impact_factor_crossref': impact_factor_crossref,
+            'impact_factor_openalex': impact_factor_openalex,
+            'impact_factor_diff': impact_factor_diff,
+            'total_articles': total_articles,
+            'if_denominator': if_denominator,
+            'total_crossref_citations': total_crossref_citations,
+            'total_openalex_citations': total_openalex_citations,
+            'if_crossref_numerator': if_crossref_numerator,
+            'if_openalex_numerator': if_openalex_numerator
+        }
+        
+    except Exception as e:
+        print(f"❌ Ошибка в calculate_metrics_parallel: {e}")
+        import traceback
+        traceback.print_exc()
+        # Возвращаем значения по умолчанию при ошибке
+        return {
+            'citescore_crossref': 0,
+            'citescore_openalex': 0,
+            'citescore_diff': 0,
+            'impact_factor_crossref': 0,
+            'impact_factor_openalex': 0,
+            'impact_factor_diff': 0,
+            'total_articles': 0,
+            'if_denominator': 0,
+            'total_crossref_citations': 0,
+            'total_openalex_citations': 0,
+            'if_crossref_numerator': 0,
+            'if_openalex_numerator': 0
+        }
 
 def get_seasonal_coefficients(journal_field="general"):
     """Возвращает взвешенные коэффициенты на основе исторических данных"""
