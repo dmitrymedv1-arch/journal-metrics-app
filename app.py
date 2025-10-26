@@ -186,18 +186,16 @@ def main():
         
          **Динамический анализ (Dynamic Analysis)**
         - Время выполнения: 3-8 минут
-        - **Корректный расчет по методологии Colab**
         - **Два значения Impact Factor**: Crossref и OpenAlex
         - **Два значения CiteScore**: Crossref и OpenAlex  
         - Периоды: статьи 43-19 мес назад, цитирования 18-6 мес назад для IF
-        - **Параллельные запросы OpenAlex** для ускорения
-        - Без прогнозов, текущие метрики
+        - Impact Factor (OpenAlex) отражает реальную логику расчета IF с учетом полугодовой задержки относительно предыдущего периода (например, IF за 2025 г. объявляется в конце июня 2026 г.)
+        - Без прогнозов, только текущие метрики
         
         ** Новые возможности:**
         - Автоматическое определение названия журнала по ISSN
         - Параллельная обработка цитирований (ускорение до 5x)
         - Колонка с датой публикации в таблице детального анализа
-        - **Корректный динамический анализ** по методологии Google Colab
         
         ©Chimica Techno Acta, https://chimicatechnoacta.ru / ©developed by daM
         """)
@@ -312,7 +310,6 @@ def main():
             - Сбор статей за 52 месяца через Crossref
             - **Параллельный** анализ цитирований через OpenAlex
             - Расчет **двух значений** Impact Factor и CiteScore
-            - Корректные периоды по методологии Colab
             """)
         elif is_precise_mode:
             st.info(f"""
@@ -422,8 +419,8 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
     """Отображение основных метрик"""
     
     if is_dynamic_mode:
-        # ДИНАМИЧЕСКИЙ РЕЖИМ - новая логика из Colab
-        st.markdown('<h3 class="section-header"> Impact Factor (по методологии Colab)</h3>', unsafe_allow_html=True)
+        # ДИНАМИЧЕСКИЙ РЕЖИМ
+        st.markdown('<h3 class="section-header"> Impact Factor </h3>', unsafe_allow_html=True)
         
         st.markdown('<div class="impact-factor-comparison">', unsafe_allow_html=True)
         st.markdown("**Сравнение Impact Factor по разным источникам:**")
@@ -479,7 +476,7 @@ def display_main_metrics(result, is_precise_mode, is_dynamic_mode):
             )
 
         st.markdown("---")
-        st.markdown('<h3 class="section-header"> CiteScore (по методологии Colab)</h3>', unsafe_allow_html=True)
+        st.markdown('<h3 class="section-header"> CiteScore </h3>', unsafe_allow_html=True)
 
         st.markdown('<div class="citescore-comparison">', unsafe_allow_html=True)
         st.markdown("**Сравнение CiteScore по разным источникам:**")
@@ -794,3 +791,4 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
+
