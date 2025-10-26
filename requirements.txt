@@ -6,3 +6,4 @@ plotly>=5.15.0
 scipy>=1.11.1
 tqdm>=4.65.0
 aiohttp>=3.8.5
+est_asyncio>=1.5.8
