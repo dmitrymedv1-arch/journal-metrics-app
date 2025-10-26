@@ -407,12 +407,12 @@ def display_results(result, is_precise_mode, is_dynamic_mode):
         with tabs[1]:
             display_detailed_analysis(result, is_dynamic_mode)
         with tabs[2]:
-            display_statistics(result)
+            display_statistics(result, is_dynamic_mode)
         with tabs[3]:
             display_parameters(result, is_precise_mode, is_dynamic_mode)
     else:
         with tabs[1]:
-            display_statistics(result)
+            display_statistics(result, is_dynamic_mode)
         with tabs[2]:
             display_parameters(result, is_precise_mode, is_dynamic_mode)
 
@@ -643,28 +643,32 @@ def display_detailed_analysis(result, is_dynamic_mode):
     with col1:
         st.subheader(" Распределение цитирований")
         
-        if result.get('articles_data'):
+        if result.get('articles_data') and is_dynamic_mode:
+            # Для динамического режима используем articles_data
             articles_df = pd.DataFrame(result['articles_data'])
-            st.dataframe(articles_df, use_container_width=True)
-        elif result['if_citation_data']:
+            
+            # Создаем отображаемую таблицу с понятными названиями колонок
+            display_df = articles_df.copy()
+            display_df = display_df.rename(columns={
+                'doi': 'DOI',
+                'pub_date': 'Дата публикации', 
+                'crossref_cites': 'Цитирования (Crossref)',
+                'openalex_cites': 'Цитирования (OpenAlex)'
+            })
+            
+            # Показываем только первые 100 строк для производительности
+            if len(display_df) > 100:
+                st.info(f"Показаны первые 100 строк из {len(display_df)}")
+                st.dataframe(display_df.head(100), use_container_width=True)
+            else:
+                st.dataframe(display_df, use_container_width=True)
+                
+        elif result.get('if_citation_data'):
             if_data = pd.DataFrame(result['if_citation_data'])
             if_data = if_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде']]
             st.dataframe(if_data, use_container_width=True)
         else:
-            st.info("Нет данных о цитированиях для импакт-фактора")
-        
-        if result.get('cs_citation_data'):
-            st.markdown("#### Для CiteScore")
-            cs_data = pd.DataFrame(result['cs_citation_data'])
-            
-            if is_dynamic_mode:
-                cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)']]
-            else:
-                cs_data = cs_data[['DOI', 'Год публикации', 'Дата публикации', 'Цитирования (Crossref)', 'Цитирования (OpenAlex)', 'Цитирования в периоде']]
-            
-            st.dataframe(cs_data, use_container_width=True)
-        else:
-            st.info("Нет данных о цитированиях для CiteScore")
+            st.info("Нет данных о цитированиях")
 
     with col2:
         st.subheader(" Анализ самоцитирований")
@@ -691,22 +695,67 @@ def display_detailed_analysis(result, is_dynamic_mode):
                 st.metric("Неудачных запросов", f"{result.get('failed_requests', 0)}")
                 st.metric("Скорость", f"{result.get('processing_speed', 0):.2f} ст/сек")
 
-    if result.get('citation_model_data'):
-        st.subheader(" Временная модель цитирований")
-        st.info(f"Построена модель на основе {len(result['citation_model_data'])} лет исторических данных")
-
-def display_statistics(result):
+def display_statistics(result, is_dynamic_mode=False):
     """Отображение статистики"""
     st.subheader(" Статистика по статьям")
 
-    if result.get('articles_data'):
-        st.markdown("#### Все статьи")
-        df_all = pd.DataFrame(result['articles_data'])
-        stats = df_all.agg({
-            'crossref_cites': ['count', 'sum', 'mean', 'std'],
-            'openalex_cites': ['sum', 'mean', 'std']
+    # Для динамического режима используем articles_data
+    if result.get('articles_data') and is_dynamic_mode:
+        articles_df = pd.DataFrame(result['articles_data'])
+        
+        st.markdown("#### Общая статистика")
+        
+        # Базовая статистика
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Всего статей", len(articles_df))
+            st.metric("Статьи для IF", result.get('if_denominator', 0))
+            st.metric("Среднее цитирований Crossref", f"{articles_df['crossref_cites'].mean():.2f}")
+            
+        with col2:
+            st.metric("Цитирований Crossref", articles_df['crossref_cites'].sum())
+            st.metric("Цитирований OpenAlex", articles_df['openalex_cites'].sum())
+            st.metric("Среднее цитирований OpenAlex", f"{articles_df['openalex_cites'].mean():.2f}")
+        
+        st.markdown("#### Детальная статистика")
+        
+        # Статистика по годам
+        articles_df['year'] = articles_df['pub_date'].str[:4]  # Извлекаем год из даты
+        
+        yearly_stats = articles_df.groupby('year').agg({
+            'doi': 'count',
+            'crossref_cites': ['sum', 'mean', 'max'],
+            'openalex_cites': ['sum', 'mean', 'max']
         }).round(2)
-        st.dataframe(stats, use_container_width=True)
+        
+        # Переименовываем колонки для лучшего отображения
+        if not yearly_stats.empty:
+            yearly_stats.columns = [
+                'Количество статей',
+                'Crossref сумма', 'Crossref среднее', 'Crossref максимум',
+                'OpenAlex сумма', 'OpenAlex среднее', 'OpenAlex максимум'
+            ]
+            st.dataframe(yearly_stats, use_container_width=True)
+        
+        # Распределение цитирований
+        st.markdown("#### Распределение цитирований")
+        col_dist1, col_dist2 = st.columns(2)
+        
+        with col_dist1:
+            zero_cites_crossref = (articles_df['crossref_cites'] == 0).sum()
+            zero_cites_openalex = (articles_df['openalex_cites'] == 0).sum()
+            
+            st.metric("Статей без цитирований (Crossref)", zero_cites_crossref)
+            st.metric("Статей без цитирований (OpenAlex)", zero_cites_openalex)
+            
+        with col_dist2:
+            high_cites_crossref = (articles_df['crossref_cites'] > 10).sum()
+            high_cites_openalex = (articles_df['openalex_cites'] > 10).sum()
+            
+            st.metric("Статей с >10 цитирований (Crossref)", high_cites_crossref)
+            st.metric("Статей с >10 цитирований (OpenAlex)", high_cites_openalex)
+            
     elif result.get('if_citation_data'):
         st.markdown("#### Для импакт-фактора")
         df_if = pd.DataFrame(result['if_citation_data'])
@@ -726,7 +775,8 @@ def display_statistics(result):
     else:
         st.info("Нет данных о статьях для импакт-фактора")
 
-    if result.get('cs_citation_data'):
+    # Для CiteScore в стандартных режимах
+    if result.get('cs_citation_data') and not is_dynamic_mode:
         st.markdown("#### Для CiteScore")
         df_cs = pd.DataFrame(result['cs_citation_data'])
         cs_stats = df_cs.groupby('Год публикации').agg({
@@ -742,7 +792,7 @@ def display_statistics(result):
             'Всего цитирований в периоде', 'Среднее цитирований в периоде', 'Стд. отклонение в периоде'
         ]
         st.dataframe(cs_stats, use_container_width=True)
-    else:
+    elif not is_dynamic_mode:
         st.info("Нет данных о статьях для CiteScore")
 
 def display_parameters(result, is_precise_mode, is_dynamic_mode):
@@ -792,5 +842,3 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
-
-
