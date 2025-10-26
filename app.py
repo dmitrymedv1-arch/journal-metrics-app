@@ -310,6 +310,7 @@ def main():
             - Сбор статей за 52 месяца через Crossref
             - **Параллельный** анализ цитирований через OpenAlex
             - Расчет **двух значений** Impact Factor и CiteScore
+            - **Impact Factor (OpenAlex)** отражает реальную логику расчета IF с учетом полугодовой задержки относительно предыдущего периода (например, IF за 2025 г. объявляется в конце июня 2026 г.)
             """)
         elif is_precise_mode:
             st.info(f"""
@@ -791,4 +792,5 @@ def display_parameters(result, is_precise_mode, is_dynamic_mode):
 
 if __name__ == "__main__":
     main()
+
 
